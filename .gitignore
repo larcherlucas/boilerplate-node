@@ -1,0 +1,29 @@
+# Windows
+**/Thumbs.db
+**/ehthumbs.db
+**/Desktop.ini
+
+# Linux
+**/.directory
+**/*~
+
+# npm
+node_modules
+package-lock.json
+*.gz
+
+#log
+logs
+**/*.log
+**/*.log.*
+
+#config
+.env
+.env.test
+.env.development
+sqitch.conf
+.vercel
+
+#keys
+private_key.pem
+public_key.pem
