@@ -53,22 +53,24 @@ const accountController = {
 
   createAccount: async (req, res) => {
     try {
-      const { email, password, household_members, preferences } = req.body;
-
+      const { username, email, password, household_members, preferences } = req.body;
+  
+      // Vérifier que le nom d'utilisateur est fourni
+      if (!username) {
+        throw new ApiError(400, "Le nom d'utilisateur est requis");
+      }
+  
       // Vérifier si l'email existe déjà
       const existingUser = await accountDataMapper.findByEmail(email);
       if (existingUser) {
         throw new ApiError(409, 'Cet email est déjà utilisé');
       }
-
-      // Hasher le mot de passe
-      const saltRounds = 10;
-      const password_hash = await bcrypt.hash(password, saltRounds);
-
+  
       // Préparer les données utilisateur
       const userData = {
+        username, // nouveau champ obligatoire
         email,
-        password_hash,
+        password, // en clair pour que le datamapper puisse hasher via cryptoPassword.hash
         role: 'user',
         household_members: household_members || {
           adults: 0,
@@ -78,18 +80,19 @@ const accountController = {
         },
         preferences: preferences || {}
       };
-
+  
       // Créer le nouvel utilisateur
       const newAccount = await accountDataMapper.createAccount(userData);
-
+  
       // Générer un token JWT
       const token = generateToken(newAccount);
-
+  
       return res.status(201).json({
         status: 'success',
         data: {
           user: {
             id: newAccount.id,
+            username: newAccount.username,
             email: newAccount.email,
             role: newAccount.role
           },
@@ -158,9 +161,14 @@ const accountController = {
     }
   },
 
-  loginForm: async (req, res) => {
+ loginForm: async (req, res) => {
     try {
       const { email, password } = req.body;
+
+      // Validation basique des champs requis
+      if (!email || !password) {
+        throw new ApiError(400, 'Email et mot de passe requis');
+      }
 
       // Vérifier si l'utilisateur existe
       const user = await accountDataMapper.findByEmailWithPassword(email);

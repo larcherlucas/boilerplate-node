@@ -10,6 +10,7 @@ import menusRouter from './menus.router.js';
 import favoritesRouter from './favorites.router.js';
 import dietaryRestrictionsRouter from './dietaryRestrictions.router.js';
 import recipeReviewsRouter from './recipeReviews.router.js';
+import paymentRouter from './payment.router.js';
 
 const router = express.Router();
 
@@ -23,6 +24,10 @@ router.use(signupRouter);
 router.use(loginRouter);
 router.use(recipeReviewsRouter); // Les routes publiques des reviews
 
+// Route publique pour le webhook Stripe (doit être avant le jwtMiddleware)
+router.use('/webhook', express.raw({ type: 'application/json' }));
+router.use('/api/payment/webhook', paymentRouter); // Only webhook route
+
 router.use(jwtMiddleware);
 
 // Routes privées
@@ -32,6 +37,7 @@ router.use(seasonalItemsRouter);
 router.use(menusRouter);
 router.use(favoritesRouter);
 router.use(dietaryRestrictionsRouter);
+router.use('/api/payment', paymentRouter); // Toutes les autres routes de paiement protégées
 
 // Error handler (404)
 router.use((_, __, next) => {

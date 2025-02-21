@@ -10,9 +10,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 config();
 
 // Résolution du chemin absolu pour la clé privée
-const privateKeyPath = process.env.JWT_PRIVATE_KEY_PATH.startsWith('./app') 
-  ? path.join(__dirname, '..', '..', process.env.JWT_PRIVATE_KEY_PATH.substring(5)) 
+const privateKeyPath = process.env.JWT_PRIVATE_KEY_PATH.startsWith('./app')
+  ? path.join(__dirname, '..', process.env.JWT_PRIVATE_KEY_PATH.replace('./app/', ''))
   : process.env.JWT_PRIVATE_KEY_PATH;
+
 
 let privateKey;
 try {

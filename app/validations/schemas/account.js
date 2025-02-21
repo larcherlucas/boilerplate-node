@@ -1,4 +1,3 @@
-/* eslint-disable max-len */
 import Joi from 'joi';
 
 // Validators de base
@@ -20,6 +19,7 @@ const jsonbValidator = Joi.object().default({});
 // Schéma pour POST (création d'un compte)
 export const postSchema = Joi.object({
   email: emailValidator,
+  username: Joi.string().min(3).required(),  // Fixed username validation
   password: passwordValidator,
   confirmPassword: Joi.string().valid(Joi.ref('password')).required(),
   role: roleValidator,
@@ -31,6 +31,7 @@ export const postSchema = Joi.object({
   subscription_end_date: Joi.date().optional(),
   subscription_status: subscriptionStatusValidator.optional(),
 }).with('password', 'confirmPassword');
+
 
 // Schéma pour PATCH (mise à jour d'un compte)
 export const patchSchema = Joi.object({

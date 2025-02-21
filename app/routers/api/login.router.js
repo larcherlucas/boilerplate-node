@@ -1,6 +1,6 @@
 /* eslint-disable import/extensions */
 import express from 'express';
-import { postSchema } from '../../validations/schemas/account.js';
+import { loginSchema, postSchema } from '../../validations/schemas/account.js';
 import validate from '../../validations/validator.js';
 import cw from '../../middlewares/controller.wrapper.js';
 import accountController from '../../controllers/account.js';
@@ -20,7 +20,7 @@ const router = express.Router();
 *@return {ApiJsonError} 500 - Internal Server Error - application/json
 */
 
-router.post('/login/', validate(postSchema, 'body'), cw(accountController.loginForm));
+router.post('/login/', validate(loginSchema, 'body'), cw(accountController.loginForm));
 
 /**
  * POST /api/logout/

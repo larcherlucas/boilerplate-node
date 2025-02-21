@@ -1,5 +1,6 @@
 import DbError from "../erros/dbError.js";
 import pool from "../datamappers/connexion.js";
+import cryptoPassword from "../utils/cryptoPassword.js";
 
 const accountDataMapper = {
   async findAllAccounts() {
@@ -30,7 +31,6 @@ const accountDataMapper = {
     }
   },
 
-  // Méthode pour trouver un utilisateur par email (sans mot de passe)
   async findByEmail(email) {
     try {
       const result = await pool.query(
@@ -46,7 +46,6 @@ const accountDataMapper = {
     }
   },
 
-  // Méthode pour trouver un utilisateur par email avec le mot de passe
   async findByEmailWithPassword(email) {
     try {
       const result = await pool.query(
@@ -62,7 +61,6 @@ const accountDataMapper = {
     }
   },
 
-  // Méthode spécifique pour l'authentification
   async findUserForAuth(id) {
     try {
       const result = await pool.query(
@@ -80,20 +78,28 @@ const accountDataMapper = {
   async createAccount(accountData) {
     try {
       const { 
+        username,        // nouveau champ
         email, 
-        password_hash, 
+        password,        // mot de passe en clair
         role = 'user', 
         household_members = {}, 
         preferences = {},
-        subscription_status = 'active'  // Valeur par défaut pour les nouveaux comptes
+        subscription_status = 'active'
       } = accountData;
-      
+  
+      if (!username) {
+        throw new Error("Username is required");
+      }
+  
+      // Hash le mot de passe en clair via cryptoPassword.hash
+      const password_hash = await cryptoPassword.hash(password);
+  
       const result = await pool.query(
         `INSERT INTO "users" 
-         (email, password_hash, role, household_members, preferences, subscription_status) 
-         VALUES ($1, $2, $3, $4, $5, $6) 
-         RETURNING id, email, role, household_members, preferences, subscription_status, created_at;`,
-        [email, password_hash, role, household_members, preferences, subscription_status]
+         (username, email, password_hash, role, household_members, preferences, subscription_status) 
+         VALUES ($1, $2, $3, $4, $5, $6, $7) 
+         RETURNING id, username, email, role, household_members, preferences, subscription_status, created_at;`,
+        [username, email, password_hash, role, household_members, preferences, subscription_status]
       );
       return result.rows[0];
     } catch (error) {
@@ -104,32 +110,39 @@ const accountDataMapper = {
   async updateAccount(id, accountData) {
     try {
       const allowedUpdates = [
-        'email', 
-        'password_hash', 
-        'role', 
-        'household_members', 
-        'preferences', 
-        'subscription_type', 
+        'email',
+        'password', // Changed from password_hash to accept plain password
+        'role',
+        'household_members',
+        'preferences',
+        'subscription_type',
         'subscription_status'
       ];
+
       const updates = [];
       const values = [];
       let counter = 1;
 
       for (const [key, value] of Object.entries(accountData)) {
         if (allowedUpdates.includes(key)) {
-          updates.push(`${key} = $${counter}`);
-          values.push(value);
+          // Special handling for password updates
+          if (key === 'password') {
+            updates.push(`password_hash = $${counter}`);
+            const hashedPassword = await cryptoPassword.hash(value);
+            values.push(hashedPassword);
+          } else {
+            updates.push(`${key} = $${counter}`);
+            values.push(value);
+          }
           counter++;
         }
       }
 
       if (updates.length === 0) return null;
 
-      // Ajout automatique de la date de mise à jour
       updates.push(`updated_at = CURRENT_TIMESTAMP`);
-      
       values.push(id);
+
       const result = await pool.query(
         `UPDATE "users" 
          SET ${updates.join(', ')} 
