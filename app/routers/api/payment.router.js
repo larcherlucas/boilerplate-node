@@ -10,6 +10,7 @@ import {
 } from '../../middlewares/payment.js';
 import { paymentSchema } from '../../validations/schemas/payment.js';
 import validate from '../../validations/validator.js';
+import checkRole from '../../middlewares/role.middleware.js';
 
 const router = express.Router();
 
@@ -46,5 +47,16 @@ router.get(
   paymentAdminMiddleware,
   cw(paymentController.getAllPayments)
 );
+
+// Route pour le contenu premium
+router.get('/premium/content', authMiddleware, checkRole('premium', 'admin'), (req, res) => {
+  res.status(200).json({
+    status: 'success',
+    data: {
+      message: 'Contenu premium accessible',
+      premiumFeatures: ['Recettes exclusives', 'Plans de repas personnalisés', 'Conseils nutritionnels avancés']
+    }
+  });
+});
 
 export default router;

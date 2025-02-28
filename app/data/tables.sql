@@ -6,6 +6,8 @@ DROP TABLE IF EXISTS menus CASCADE;
 DROP TABLE IF EXISTS seasonal_items CASCADE;
 DROP TABLE IF EXISTS recipes CASCADE;
 DROP TABLE IF EXISTS users CASCADE;
+DROP TABLE IF EXISTS payments CASCADE;
+DROP TABLE IF EXISTS weekly_menus CASCADE;
 DROP TYPE IF EXISTS MEAL_TYPE CASCADE;
 DROP TYPE IF EXISTS DIFFICULTY_LEVEL CASCADE;
 DROP TYPE IF EXISTS SEASON CASCADE;
@@ -26,7 +28,7 @@ CREATE TYPE SUBSCRIPTION_STATUS AS ENUM ('active', 'cancelled', 'expired', 'pend
 -- Table des utilisateurs
 CREATE TABLE users (
     id SERIAL PRIMARY KEY,
-     username VARCHAR(255) UNIQUE NOT NULL, 
+    username VARCHAR(255) UNIQUE NOT NULL, 
     email VARCHAR(255) UNIQUE NOT NULL,
     password_hash VARCHAR(255),
     role USER_ROLE NOT NULL DEFAULT 'user',
@@ -86,11 +88,11 @@ CREATE TABLE seasonal_items (
     UNIQUE(name, type)
 );
 
--- Table des menus générés
-CREATE TABLE menus (
+-- Table des menus hebdomadaires
+-- Remplaçant la table "menus" par "weekly_menus" pour correspondre aux routes
+CREATE TABLE weekly_menus (
     id SERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    type MENU_TYPE NOT NULL,
     meal_schedule JSONB NOT NULL,
     status MENU_STATUS NOT NULL DEFAULT 'active',
     is_customized BOOLEAN NOT NULL DEFAULT false,
@@ -146,28 +148,16 @@ CREATE TABLE payments (
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- Ajout d'un trigger pour la mise à jour de updated_at
-CREATE TRIGGER update_payments_updated_at
-    BEFORE UPDATE ON payments
-    FOR EACH ROW
-    EXECUTE FUNCTION update_updated_at_column();
-
--- Création d'index pour la table payments
-CREATE INDEX idx_payments_user ON payments(user_id);
-CREATE INDEX idx_payments_status ON payments(status);
-CREATE INDEX idx_payments_created_at ON payments(created_at);
-CREATE INDEX idx_recipes_meal_type ON recipes(meal_type);
-CREATE INDEX idx_recipes_difficulty ON recipes(difficulty_level);
-CREATE INDEX idx_recipes_season ON recipes(season);
-CREATE INDEX idx_recipes_is_premium ON recipes(is_premium);
-CREATE INDEX idx_recipes_author ON recipes(author_id);
-CREATE INDEX idx_menus_user ON menus(user_id);
-CREATE INDEX idx_menus_status ON menus(status);
-CREATE INDEX idx_favorites_user ON favorites(user_id);
-CREATE INDEX idx_favorites_recipe ON favorites(recipe_id);
-CREATE INDEX idx_dietary_restrictions_user ON dietary_restrictions(user_id);
-CREATE INDEX idx_recipe_reviews_recipe ON recipe_reviews(recipe_id);
-CREATE INDEX idx_recipe_reviews_user ON recipe_reviews(user_id);
+-- Table public_info pour la route GET /public-info
+CREATE TABLE public_info (
+    id SERIAL PRIMARY KEY,
+    landing_page_content JSONB NOT NULL DEFAULT '{}',
+    features JSONB NOT NULL DEFAULT '[]',
+    subscription_plans JSONB NOT NULL DEFAULT '[]',
+    faqs JSONB NOT NULL DEFAULT '[]',
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 
 -- Trigger function
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -198,3 +188,35 @@ CREATE TRIGGER update_recipe_reviews_updated_at
     BEFORE UPDATE ON recipe_reviews
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_weekly_menus_updated_at
+    BEFORE UPDATE ON weekly_menus
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_payments_updated_at
+    BEFORE UPDATE ON payments
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_public_info_updated_at
+    BEFORE UPDATE ON public_info
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- Création d'index
+CREATE INDEX idx_recipes_meal_type ON recipes(meal_type);
+CREATE INDEX idx_recipes_difficulty ON recipes(difficulty_level);
+CREATE INDEX idx_recipes_season ON recipes(season);
+CREATE INDEX idx_recipes_is_premium ON recipes(is_premium);
+CREATE INDEX idx_recipes_author ON recipes(author_id);
+CREATE INDEX idx_weekly_menus_user ON weekly_menus(user_id);
+CREATE INDEX idx_weekly_menus_status ON weekly_menus(status);
+CREATE INDEX idx_favorites_user ON favorites(user_id);
+CREATE INDEX idx_favorites_recipe ON favorites(recipe_id);
+CREATE INDEX idx_dietary_restrictions_user ON dietary_restrictions(user_id);
+CREATE INDEX idx_recipe_reviews_recipe ON recipe_reviews(recipe_id);
+CREATE INDEX idx_recipe_reviews_user ON recipe_reviews(user_id);
+CREATE INDEX idx_payments_user ON payments(user_id);
+CREATE INDEX idx_payments_status ON payments(status);
+CREATE INDEX idx_payments_created_at ON payments(created_at);

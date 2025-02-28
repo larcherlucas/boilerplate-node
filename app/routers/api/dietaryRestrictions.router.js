@@ -4,9 +4,9 @@ import dietaryRestrictionsController from '../../controllers/dietaryRestrictions
 const router = express.Router();
 
 router.get('/dietary-restrictions', dietaryRestrictionsController.getAll);
-router.post('/dietary-restrictions', dietaryRestrictionsController.create);
-router.put('/dietary-restrictions/:type', dietaryRestrictionsController.update);
-router.delete('/dietary-restrictions/:type', dietaryRestrictionsController.delete);
-router.delete('/dietary-restrictions', dietaryRestrictionsController.deleteAll);
+// router.post('/dietary-restrictions', dietaryRestrictionsController.create); a supprimer
+// router.put('/dietary-restrictions/:type', dietaryRestrictionsController.update);
+// router.delete('/dietary-restrictions/:type', dietaryRestrictionsController.delete);
+// router.delete('/dietary-restrictions', dietaryRestrictionsController.deleteAll);
 
 export default router;

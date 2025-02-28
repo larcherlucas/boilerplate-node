@@ -18,9 +18,16 @@ const controllerWrapper = (controllerFn) => async (req, res, next) => {
       return res.status(err.status || 500).json({
         status: 'error',
         message: err.message
+        
       });
     }
-    
+    // Vérifiez si l'erreur contient un message sur "email déjà utilisé"
+    if (err.message && err.message.includes('déjà utilisé')) {
+      return res.status(409).json({
+        status: 'error',
+        message: err.message
+      });
+    }
     // Default error response
     return res.status(500).json({
       status: 'error',

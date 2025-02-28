@@ -6,7 +6,7 @@ const accountDataMapper = {
   async findAllAccounts() {
     try {
       const result = await pool.query(
-        `SELECT id, email, role, household_members, preferences, 
+        `SELECT id, username, email, role, household_members, preferences, 
                 subscription_type, subscription_status, created_at, updated_at 
          FROM "users";`
       );
@@ -19,7 +19,7 @@ const accountDataMapper = {
   async findOneAccount(id) {
     try {
       const result = await pool.query(
-        `SELECT id, email, role, household_members, preferences, 
+        `SELECT id, username, email, role, household_members, preferences, 
                 subscription_type, subscription_status, created_at, updated_at 
          FROM "users" 
          WHERE id = $1;`,
@@ -34,7 +34,7 @@ const accountDataMapper = {
   async findByEmail(email) {
     try {
       const result = await pool.query(
-        `SELECT id, email, role, household_members, preferences, 
+        `SELECT id, username, email, role, household_members, preferences, 
                subscription_type, subscription_status, created_at, updated_at 
          FROM "users" 
          WHERE email = $1;`,
@@ -49,7 +49,7 @@ const accountDataMapper = {
   async findByEmailWithPassword(email) {
     try {
       const result = await pool.query(
-        `SELECT id, email, password_hash, role, household_members, preferences, 
+        `SELECT id, username, email, password_hash, role, household_members, preferences, 
                subscription_type, subscription_status, created_at, updated_at 
          FROM "users" 
          WHERE email = $1;`,
@@ -64,7 +64,7 @@ const accountDataMapper = {
   async findUserForAuth(id) {
     try {
       const result = await pool.query(
-        `SELECT id, email, role, subscription_status 
+        `SELECT id, username, email, role, subscription_status 
          FROM "users" 
          WHERE id = $1;`,
         [id]
@@ -78,9 +78,9 @@ const accountDataMapper = {
   async createAccount(accountData) {
     try {
       const { 
-        username,        // nouveau champ
+        username,
         email, 
-        password,        // mot de passe en clair
+        password,
         role = 'user', 
         household_members = {}, 
         preferences = {},
@@ -110,8 +110,9 @@ const accountDataMapper = {
   async updateAccount(id, accountData) {
     try {
       const allowedUpdates = [
+        'username',  // Ajout de username aux champs permis
         'email',
-        'password', // Changed from password_hash to accept plain password
+        'password_hash', // Pour permettre la mise à jour du mot de passe hashé
         'role',
         'household_members',
         'preferences',
@@ -125,15 +126,8 @@ const accountDataMapper = {
 
       for (const [key, value] of Object.entries(accountData)) {
         if (allowedUpdates.includes(key)) {
-          // Special handling for password updates
-          if (key === 'password') {
-            updates.push(`password_hash = $${counter}`);
-            const hashedPassword = await cryptoPassword.hash(value);
-            values.push(hashedPassword);
-          } else {
-            updates.push(`${key} = $${counter}`);
-            values.push(value);
-          }
+          updates.push(`${key} = $${counter}`);
+          values.push(value);
           counter++;
         }
       }
@@ -147,7 +141,7 @@ const accountDataMapper = {
         `UPDATE "users" 
          SET ${updates.join(', ')} 
          WHERE id = $${counter} 
-         RETURNING id, email, role, household_members, preferences, 
+         RETURNING id, username, email, role, household_members, preferences, 
                    subscription_type, subscription_status, updated_at;`,
         values
       );
@@ -164,6 +158,95 @@ const accountDataMapper = {
         [id]
       );
       return result.rowCount > 0;
+    } catch (error) {
+      throw new DbError(error.message);
+    }
+  },
+
+  // Méthodes supplémentaires pour les restrictions alimentaires
+  async getDietaryRestrictions(userId) {
+    try {
+      const result = await pool.query(
+        `SELECT id, restriction_type, details, created_at
+         FROM "dietary_restrictions"
+         WHERE user_id = $1;`,
+        [userId]
+      );
+      return result.rows;
+    } catch (error) {
+      throw new DbError(error.message);
+    }
+  },
+
+  async addDietaryRestriction(userId, data) {
+    try {
+      const { restriction_type, details } = data;
+      
+      const result = await pool.query(
+        `INSERT INTO "dietary_restrictions" (user_id, restriction_type, details)
+         VALUES ($1, $2, $3)
+         RETURNING id, restriction_type, details, created_at;`,
+        [userId, restriction_type, details]
+      );
+      return result.rows[0];
+    } catch (error) {
+      throw new DbError(error.message);
+    }
+  },
+
+  async deleteDietaryRestriction(userId, restrictionType) {
+    try {
+      const result = await pool.query(
+        `DELETE FROM "dietary_restrictions"
+         WHERE user_id = $1 AND restriction_type = $2
+         RETURNING id;`,
+        [userId, restrictionType]
+      );
+      return result.rowCount > 0;
+    } catch (error) {
+      throw new DbError(error.message);
+    }
+  },
+
+  async deleteAllDietaryRestrictions(userId) {
+    try {
+      const result = await pool.query(
+        `DELETE FROM "dietary_restrictions"
+         WHERE user_id = $1
+         RETURNING id;`,
+        [userId]
+      );
+      return result.rowCount > 0;
+    } catch (error) {
+      throw new DbError(error.message);
+    }
+  },
+
+  // Méthodes pour la gestion des membres du foyer
+  async getHouseholdMembers(userId) {
+    try {
+      const result = await pool.query(
+        `SELECT household_members
+         FROM "users"
+         WHERE id = $1;`,
+        [userId]
+      );
+      return result.rows[0]?.household_members || {};
+    } catch (error) {
+      throw new DbError(error.message);
+    }
+  },
+
+  async updateHouseholdMembers(userId, householdData) {
+    try {
+      const result = await pool.query(
+        `UPDATE "users"
+         SET household_members = $1, updated_at = CURRENT_TIMESTAMP
+         WHERE id = $2
+         RETURNING household_members;`,
+        [householdData, userId]
+      );
+      return result.rows[0];
     } catch (error) {
       throw new DbError(error.message);
     }

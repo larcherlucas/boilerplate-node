@@ -63,10 +63,17 @@ const authMiddleware = async (req, res, next) => {
       
       console.log("Utilisateur trouvé:", user); // Debug: vérification de l'utilisateur
       
-      // Vérifier le statut de l'abonnement seulement si besoin
-      if (user.subscription_status === 'cancelled') {
-        throw new ApiError(401, "Compte désactivé ou abonnement annulé");
-      }
+     // Vérifier le statut de l'abonnement
+if (user.subscription_status === 'cancelled') {
+  throw new ApiError(401, "Compte désactivé ou abonnement annulé");
+}
+
+// Vérifier si l'abonnement est expiré
+if (user.subscription_end_date && new Date(user.subscription_end_date) < new Date()) {
+  // Mettre à jour le statut si nécessaire
+  await accountDataMapper.updateAccount(user.id, { subscription_status: 'expired' });
+  throw new ApiError(401, "Abonnement expiré");
+}
 
       // Vérifier l'accès aux fonctionnalités premium
       if (req.originalUrl.includes('/premium') && user.role !== 'premium' && user.role !== 'admin') {

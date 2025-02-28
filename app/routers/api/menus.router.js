@@ -3,11 +3,12 @@ import menusController from '../../controllers/menus.js';
 
 const router = express.Router();
 
-router.get('/menus', menusController.getAll);
-router.get('/menus/active', menusController.getActive);
-router.get('/menus/:id(\\d+)', menusController.getById);
-router.post('/menus', menusController.create);
-router.put('/menus/:id(\\d+)', menusController.update);
-router.delete('/menus/:id(\\d+)', menusController.delete);
+router.get('/weekly-menus', menusController.getWeeklyMenus);
+router.get('/weekly-menus/:id(\\d+)', menusController.getWeeklyMenuById);
+router.post('/weekly-menus', menusController.createWeeklyMenu);
+router.post('/weekly-menus/generate', menusController.generateWeeklyMenu);
+router.put('/weekly-menus/:id(\\d+)', menusController.updateWeeklyMenu);
+router.delete('/weekly-menus/:id(\\d+)', menusController.deleteWeeklyMenu);
+
 
 export default router;

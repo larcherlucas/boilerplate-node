@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import accountDataMapper from '../datamappers/account.js';
 import ApiError from '../erros/api.error.js';
 import generateToken from '../utils/generateToken.js';
+import cryptoPassword from '../utils/cryptoPassword.js';
 
 const accountController = {
   getAllAccounts: async (req, res) => {
@@ -68,9 +69,9 @@ const accountController = {
   
       // Préparer les données utilisateur
       const userData = {
-        username, // nouveau champ obligatoire
+        username,
         email,
-        password, // en clair pour que le datamapper puisse hasher via cryptoPassword.hash
+        password,
         role: 'user',
         household_members: household_members || {
           adults: 0,
@@ -161,7 +162,7 @@ const accountController = {
     }
   },
 
- loginForm: async (req, res) => {
+  loginForm: async (req, res) => {
     try {
       const { email, password } = req.body;
 
@@ -177,7 +178,7 @@ const accountController = {
       }
 
       // Vérifier le mot de passe
-      const isPasswordValid = await bcrypt.compare(password, user.password_hash);
+      const isPasswordValid = await cryptoPassword.compare(password, user.password_hash);
       if (!isPasswordValid) {
         throw new ApiError(401, 'Email ou mot de passe incorrect');
       }
@@ -203,6 +204,7 @@ const accountController = {
         data: {
           user: {
             id: user.id,
+            username: user.username,
             email: user.email,
             role: user.role,
             subscription_status: user.subscription_status
@@ -232,17 +234,20 @@ const accountController = {
   // Méthode pour vérifier le token actuel (utile pour la persistance de session côté client)
   verifyToken: async (req, res) => {
     try {
-      // Récupérer le token du cookie ou du header Authorization
-      const token = req.cookies.auth_token || 
-                    (req.headers.authorization && req.headers.authorization.split(' ')[1]);
+      // Récupérer le token du header Authorization ou du cookie
+      const authHeader = req.headers.authorization;
+      const tokenFromHeader = authHeader && authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : null;
+      const tokenFromCookie = req.cookies ? req.cookies.auth_token : null;
+      
+      const token = tokenFromHeader || tokenFromCookie;
       
       if (!token) {
         throw new ApiError(401, 'Non authentifié');
       }
       
-      // Vérifier le token
       try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        // Vérifier le token avec la clé publique
+        const decoded = jwt.verify(token, publicKey, { algorithms: ['RS256'] });
         
         // Récupérer les informations utilisateur à jour
         const user = await accountDataMapper.findOneAccount(decoded.userId);
@@ -256,17 +261,28 @@ const accountController = {
           data: {
             user: {
               id: user.id,
+              username: user.username,
               email: user.email,
               role: user.role,
-              subscription_status: user.subscription_status
+              subscription: {
+                type: user.subscription_type || null,
+                isActive: user.subscription_status === 'active',
+                status: user.subscription_status || null,
+                startDate: user.subscription_start_date || null,
+                endDate: user.subscription_end_date || null
+              }
             }
           }
         });
       } catch (error) {
+        console.error("Erreur lors de la vérification du token:", error);
         throw new ApiError(401, 'Token invalide ou expiré');
       }
     } catch (err) {
-      throw err;
+      return res.status(err.statusCode || 500).json({
+        status: 'error',
+        message: err.message || 'Une erreur est survenue lors de la vérification du token'
+      });
     }
   }
 };

@@ -22,4 +22,5 @@ const router = express.Router();
 
 router.post('/signup', validate(postSchema, 'body'), cw(accountController.createAccount));
 
+
 export default router;
