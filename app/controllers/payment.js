@@ -2,6 +2,8 @@ import Stripe from 'stripe';
 import accountDataMapper from '../datamappers/account.js';
 import ApiError from '../erros/api.error.js';
 import logger from '../utils/logger.js';
+import paymentDataMapper from '../datamappers/payment.js';
+import formatUserResponse from '../utils/formatUserResponse.js';
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 const paymentController = {
@@ -74,19 +76,7 @@ const paymentController = {
       return res.status(200).json({
         status: 'success',
         data: {
-          user: {
-            id: updatedUser.id,
-            username: updatedUser.username,
-            email: updatedUser.email,
-            role: updatedUser.role,
-            subscription: {
-              type: updatedUser.subscription_type || null,
-              isActive: updatedUser.subscription_status === 'active',
-              status: updatedUser.subscription_status || null,
-              startDate: updatedUser.subscription_start_date || null,
-              endDate: updatedUser.subscription_end_date || null
-            }
-          },
+          user: formatUserResponse(updatedUser),
           payment: {
             clientSecret: subscription.latest_invoice.payment_intent.client_secret,
             subscriptionId: subscription.id

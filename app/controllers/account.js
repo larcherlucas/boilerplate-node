@@ -4,6 +4,7 @@ import accountDataMapper from '../datamappers/account.js';
 import ApiError from '../erros/api.error.js';
 import generateToken from '../utils/generateToken.js';
 import cryptoPassword from '../utils/cryptoPassword.js';
+import formatUserResponse from '../utils/formatUserResponse.js';
 
 const accountController = {
   getAllAccounts: async (req, res) => {
@@ -91,12 +92,7 @@ const accountController = {
       return res.status(201).json({
         status: 'success',
         data: {
-          user: {
-            id: newAccount.id,
-            username: newAccount.username,
-            email: newAccount.email,
-            role: newAccount.role
-          },
+          user: formatUserResponse(newAccount),
           token
         }
       });
@@ -202,13 +198,7 @@ const accountController = {
       return res.status(200).json({
         status: 'success',
         data: {
-          user: {
-            id: user.id,
-            username: user.username,
-            email: user.email,
-            role: user.role,
-            subscription_status: user.subscription_status
-          },
+          user: formatUserResponse(user),
           token
         }
       });
@@ -259,30 +249,17 @@ const accountController = {
         return res.status(200).json({
           status: 'success',
           data: {
-            user: {
-              id: user.id,
-              username: user.username,
-              email: user.email,
-              role: user.role,
-              subscription: {
-                type: user.subscription_type || null,
-                isActive: user.subscription_status === 'active',
-                status: user.subscription_status || null,
-                startDate: user.subscription_start_date || null,
-                endDate: user.subscription_end_date || null
-              }
-            }
+            user: formatUserResponse(user)
           }
         });
-      } catch (error) {
-        console.error("Erreur lors de la vérification du token:", error);
-        throw new ApiError(401, 'Token invalide ou expiré');
+      } catch (err) {
+        return res.status(err.statusCode || 500).json({
+          status: 'error',
+          message: err.message || 'Une erreur est survenue lors de la vérification du token'
+        });
       }
     } catch (err) {
-      return res.status(err.statusCode || 500).json({
-        status: 'error',
-        message: err.message || 'Une erreur est survenue lors de la vérification du token'
-      });
+      throw err;
     }
   }
 };
