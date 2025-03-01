@@ -9,7 +9,7 @@ import {
   paymentAdminMiddleware
 } from '../../middlewares/payment.js';
 import { paymentSchema } from '../../validations/schemas/payment.js';
-import validate from '../../validations/validator.js';
+import validate from '../../validations/validator.js/';
 import checkRole from '../../middlewares/role.middleware.js';
 
 const router = express.Router();

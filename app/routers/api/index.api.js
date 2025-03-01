@@ -37,7 +37,7 @@ router.use(seasonalItemsRouter);
 router.use(menusRouter);
 router.use(favoritesRouter);
 router.use(dietaryRestrictionsRouter);
-router.use('/api/payment', paymentRouter); // Toutes les autres routes de paiement protégées
+router.use('/payment', paymentRouter);
 
 // Error handler (404)
 router.use((_, __, next) => {

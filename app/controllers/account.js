@@ -1,10 +1,40 @@
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import accountDataMapper from '../datamappers/account.js';
 import ApiError from '../erros/api.error.js';
 import generateToken from '../utils/generateToken.js';
 import cryptoPassword from '../utils/cryptoPassword.js';
 import formatUserResponse from '../utils/formatUserResponse.js';
+
+// Récupération de la clé publique
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+let publicKey;
+
+try {
+  // Essayer d'abord avec la variable d'environnement
+  const publicKeyPath = process.env.JWT_PUBLIC_KEY_PATH
+    ? process.env.JWT_PUBLIC_KEY_PATH.startsWith('./app')
+      ? path.join(__dirname, '..', process.env.JWT_PUBLIC_KEY_PATH.substring(5))
+      : process.env.JWT_PUBLIC_KEY_PATH
+    : path.join(__dirname, '..', 'keys', 'public.key');
+
+  publicKey = fs.readFileSync(publicKeyPath, 'utf8');
+  console.log("Clé publique chargée avec succès pour account.js");
+} catch (error) {
+  console.error('Erreur lors du chargement de la clé publique dans account.js:', error);
+  // Tentative de chemin alternatif
+  try {
+    const alternativePath = path.join(__dirname, '..', 'keys', 'public.key');
+    publicKey = fs.readFileSync(alternativePath, 'utf8');
+    console.log("Clé publique chargée depuis le chemin alternatif dans account.js");
+  } catch (altError) {
+    console.error('Échec du chargement depuis le chemin alternatif dans account.js:', altError);
+    throw new Error('Impossible de charger la clé publique JWT dans account.js');
+  }
+}
 
 const accountController = {
   getAllAccounts: async (req, res) => {
@@ -252,14 +282,20 @@ const accountController = {
             user: formatUserResponse(user)
           }
         });
-      } catch (err) {
-        return res.status(err.statusCode || 500).json({
-          status: 'error',
-          message: err.message || 'Une erreur est survenue lors de la vérification du token'
-        });
+      } catch (jwtError) {
+        if (jwtError.name === 'JsonWebTokenError') {
+          throw new ApiError(401, 'Token invalide');
+        }
+        if (jwtError.name === 'TokenExpiredError') {
+          throw new ApiError(401, 'Token expiré');
+        }
+        throw new ApiError(401, jwtError.message || 'Une erreur est survenue lors de la vérification du token');
       }
     } catch (err) {
-      throw err;
+      return res.status(err.statusCode || 500).json({
+        status: 'error',
+        message: err.message || 'Une erreur est survenue lors de la vérification du token'
+      });
     }
   }
 };

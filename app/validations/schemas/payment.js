@@ -13,6 +13,19 @@ const PAYMENT_TYPE = {
   ONE_TIME: 'one_time'
 };
 
+function validate(schema, source) {
+  return (req, res, next) => {
+    const { error } = schema.validate(req[source]);
+    if (error) {
+      return res.status(400).json({
+        message: 'Validation error',
+        details: error.details.map((detail) => detail.message),
+      });
+    }
+    next();
+  };
+}
+
 // Schema for creating/updating subscription
 const paymentSchema = Joi.object({
   priceId: Joi.string().required().messages({
@@ -49,33 +62,12 @@ const paymentHistoryQuerySchema = Joi.object({
   offset: Joi.number().integer().min(0).default(0)
 });
 
-// Validation function
-const validate = (schema, source = 'body') => {
-  return (req, res, next) => {
-    const { error, value } = schema.validate(req[source], {
-      abortEarly: false,
-      stripUnknown: true
-    });
-    
-    if (error) {
-      return res.status(400).json({
-        message: 'Validation error',
-        details: error.details.map((detail) => detail.message)
-      });
-    }
-    
-    // Assigner les valeurs validées à req[source]
-    req[source] = value;
-    next();
-  };
-};
-
 export {
   PAYMENT_STATUS,
   PAYMENT_TYPE,
+  validate,
   paymentSchema,
   createPaymentRecordSchema,
   updatePaymentSchema,
-  paymentHistoryQuerySchema,
-  validate
+  paymentHistoryQuerySchema
 };
