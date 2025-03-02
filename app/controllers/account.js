@@ -36,6 +36,20 @@ try {
   }
 }
 
+// Configuration pour les mots de passe
+const PASSWORD_MIN_LENGTH = 8;
+const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)[\w\d!@#$%^&*()-_+=]{8,}$/;
+
+// Préférences par défaut
+const DEFAULT_PREFERENCES = {
+  language: 'fr',
+  theme: 'light',
+  notifications: {
+    email: true,
+    app: true
+  }
+};
+
 const accountController = {
   getAllAccounts: async (req, res) => {
     try {
@@ -85,23 +99,63 @@ const accountController = {
 
   createAccount: async (req, res) => {
     try {
-      const { username, email, password, household_members, preferences } = req.body;
+      const { username, email, password, confirmPassword, household_members, preferences } = req.body;
   
-      // Vérifier que le nom d'utilisateur est fourni
+      // Journalisation en développement uniquement
+      if (process.env.NODE_ENV === 'development') {
+        console.log('Requête d\'inscription reçue:', { 
+          username, 
+          email, 
+          household_members, 
+          preferences,
+          hasPassword: !!password,
+          hasConfirmPassword: !!confirmPassword
+        });
+      }
+      
+      // Vérifications des données obligatoires
       if (!username) {
         throw new ApiError(400, "Le nom d'utilisateur est requis");
       }
+      
+      if (!email) {
+        throw new ApiError(400, "L'adresse email est requise");
+      }
+      
+      if (!password) {
+        throw new ApiError(400, "Le mot de passe est requis");
+      }
+      
+      // Normalisation de l'email
+      const normalizedEmail = email.trim().toLowerCase();
+      
+      // Vérification de la correspondance des mots de passe
+      if (password !== confirmPassword) {
+        throw new ApiError(400, "Les mots de passe ne correspondent pas");
+      }
+      
+      // Vérification de la complexité du mot de passe
+      if (password.length < PASSWORD_MIN_LENGTH) {
+        throw new ApiError(400, `Le mot de passe doit contenir au moins ${PASSWORD_MIN_LENGTH} caractères`);
+      }
+      
+      if (!PASSWORD_REGEX.test(password)) {
+        throw new ApiError(400, "Le mot de passe doit contenir au moins une majuscule, une minuscule et un chiffre");
+      }
   
       // Vérifier si l'email existe déjà
-      const existingUser = await accountDataMapper.findByEmail(email);
+      const existingUser = await accountDataMapper.findByEmail(normalizedEmail);
       if (existingUser) {
         throw new ApiError(409, 'Cet email est déjà utilisé');
       }
-  
-      // Préparer les données utilisateur
+      
+      // Fusion des préférences par défaut avec les préférences fournies
+      const mergedPreferences = { ...DEFAULT_PREFERENCES, ...(preferences || {}) };
+      
+      // Préparation des données utilisateur
       const userData = {
         username,
-        email,
+        email: normalizedEmail,
         password,
         role: 'user',
         household_members: household_members || {
@@ -110,14 +164,29 @@ const accountController = {
           children_under_3: 0,
           babies: 0
         },
-        preferences: preferences || {}
+        preferences: mergedPreferences,
+        subscription: {
+          type: null,
+          status: 'inactive',
+          startDate: null,
+          endDate: null
+        }
       };
   
       // Créer le nouvel utilisateur
       const newAccount = await accountDataMapper.createAccount(userData);
+      
+      if (!newAccount) {
+        throw new ApiError(500, "Échec de la création du compte utilisateur");
+      }
   
       // Générer un token JWT
       const token = generateToken(newAccount);
+      
+      // Journalisation en développement uniquement
+      if (process.env.NODE_ENV === 'development') {
+        console.log('Compte créé avec succès:', { id: newAccount.id, username: newAccount.username });
+      }
   
       return res.status(201).json({
         status: 'success',
@@ -127,6 +196,10 @@ const accountController = {
         }
       });
     } catch (err) {
+      // Log détaillé de l'erreur en développement
+      if (process.env.NODE_ENV === 'development') {
+        console.error('Erreur lors de la création de compte:', err);
+      }
       throw err;
     }
   },
@@ -142,14 +215,51 @@ const accountController = {
       
       // Si le mot de passe est fourni, le hasher
       if (req.body.password) {
+        // Vérification du confirm password
+        if (req.body.password !== req.body.confirmPassword) {
+          throw new ApiError(400, "Les mots de passe ne correspondent pas");
+        }
+        
+        // Vérification de la complexité du mot de passe
+        if (req.body.password.length < PASSWORD_MIN_LENGTH) {
+          throw new ApiError(400, `Le mot de passe doit contenir au moins ${PASSWORD_MIN_LENGTH} caractères`);
+        }
+        
+        if (!PASSWORD_REGEX.test(req.body.password)) {
+          throw new ApiError(400, "Le mot de passe doit contenir au moins une majuscule, une minuscule et un chiffre");
+        }
+        
         const saltRounds = 10;
         req.body.password_hash = await bcrypt.hash(req.body.password, saltRounds);
         delete req.body.password;
+        delete req.body.confirmPassword;
+      }
+      
+      // Normalisation de l'email si fourni
+      if (req.body.email) {
+        req.body.email = req.body.email.trim().toLowerCase();
+        
+        // Vérifier si le nouvel email est déjà utilisé par un autre compte
+        const existingUser = await accountDataMapper.findByEmail(req.body.email);
+        if (existingUser && existingUser.id !== accountId) {
+          throw new ApiError(409, 'Cet email est déjà utilisé par un autre compte');
+        }
       }
       
       // Empêcher un utilisateur non-admin de modifier son propre rôle
       if (req.user.role !== 'admin' && req.body.role) {
         delete req.body.role;
+      }
+      
+      // Fusion des préférences existantes avec les nouvelles
+      if (req.body.preferences) {
+        const currentAccount = await accountDataMapper.findOneAccount(accountId);
+        if (currentAccount) {
+          req.body.preferences = { 
+            ...currentAccount.preferences, 
+            ...req.body.preferences 
+          };
+        }
       }
       
       const updatedAccount = await accountDataMapper.updateAccount(accountId, req.body);
@@ -160,7 +270,7 @@ const accountController = {
 
       return res.status(200).json({
         status: 'success',
-        data: updatedAccount
+        data: formatUserResponse(updatedAccount)  
       });
     } catch (err) {
       throw err;
@@ -196,9 +306,12 @@ const accountController = {
       if (!email || !password) {
         throw new ApiError(400, 'Email et mot de passe requis');
       }
+      
+      // Normalisation de l'email
+      const normalizedEmail = email.trim().toLowerCase();
 
       // Vérifier si l'utilisateur existe
-      const user = await accountDataMapper.findByEmailWithPassword(email);
+      const user = await accountDataMapper.findByEmailWithPassword(normalizedEmail);
       if (!user) {
         throw new ApiError(401, 'Email ou mot de passe incorrect');
       }

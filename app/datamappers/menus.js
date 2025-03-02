@@ -19,7 +19,51 @@ const menusDataMapper = {
     const result = await pool.query(query, [userId, 'active']);
     return result.rows;
   },
+// Modifier dans app/datamappers/menus.js
 
+async getEligibleRecipes(dietaryRestrictions = [], familySize = 1, mealTypes = ['breakfast', 'lunch', 'dinner'], userType = 'none') {
+  try {
+    let query = `
+      SELECT r.* 
+      FROM recipes r
+      WHERE 1=1
+    `;
+    
+    const values = [];
+    let paramCount = 1;
+    
+    // Filtrer par abonnement pour les utilisateurs non-abonnés
+    if (userType === 'none') {
+      query += ` AND r.is_premium = false`;
+    }
+    
+    // Filtrer par type de repas
+    if (mealTypes.length > 0) {
+      query += ` AND r.meal_type = ANY($${paramCount})`;
+      values.push(mealTypes);
+      paramCount++;
+    }
+    
+    // Ajouter les filtres pour les restrictions alimentaires
+    if (dietaryRestrictions.length > 0) {
+      // Construire les clauses pour chaque restriction
+      // (simplifié ici - en pratique, il faudrait adapter selon le format de vos restrictions)
+      dietaryRestrictions.forEach((restriction, index) => {
+        const placeholder = `$${paramCount++}`;
+        query += ` AND NOT (r.ingredients::text ILIKE '%' || ${placeholder} || '%')`;
+        values.push(restriction.details || restriction.restriction_type);
+      });
+    }
+    
+    // Trier aléatoirement pour la diversité des menus
+    query += ` ORDER BY random()`;
+    
+    const result = await pool.query(query, values);
+    return result.rows;
+  } catch (error) {
+    throw new DbError(error.message);
+  }
+},
   async createWeeklyMenu(userId, menuData) {
     const query = `
       INSERT INTO weekly_menus 
@@ -83,7 +127,7 @@ const menusDataMapper = {
   },
 
   // Nouvelles méthodes pour le générateur de menus
-  async getEligibleRecipes(dietaryRestrictions = [], familySize = 1, mealTypes = ['breakfast', 'lunch', 'dinner'], limit = 100) {
+  async getEligibleRecipes(dietaryRestrictions = [], familySize = 1, mealTypes = ['breakfast', 'lunch', 'dinner'], limit = 100, userRole = 'free') {
     // Construction des conditions pour les restrictions alimentaires
     let restrictionConditions = '';
     const values = [familySize];
@@ -129,20 +173,26 @@ const menusDataMapper = {
       values.push(mealTypes);
     }
 
-    const query = `
-      SELECT r.* 
-      FROM recipes r
-      WHERE r.serves_min <= $1 AND r.serves_max >= $1
-      ${restrictionConditions}
-      ${mealTypeCondition}
-      ORDER BY random()
-      LIMIT $${values.length + 1}
-    `;
-    
-    values.push(limit);
-    const result = await pool.query(query, values);
-    return result.rows;
-  },
+    let premiumCondition = '';
+  if (userRole !== 'premium' && userRole !== 'admin') {
+    premiumCondition = 'AND (r.is_premium = false OR r.is_premium IS NULL)';
+  }
+
+  const query = `
+    SELECT r.* 
+    FROM recipes r
+    WHERE r.serves_min <= $1 AND r.serves_max >= $1
+    ${restrictionConditions}
+    ${mealTypeCondition}
+    ${premiumCondition}
+    ORDER BY random()
+    LIMIT $${values.length + 1}
+  `;
+  
+  values.push(limit);
+  const result = await pool.query(query, values);
+  return result.rows;
+},
 
   async getFavoriteRecipes(userId, limit = 20) {
     const query = `

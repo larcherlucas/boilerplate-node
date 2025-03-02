@@ -1,5 +1,6 @@
 import accountDataMapper from '../datamappers/account.js';
 import ApiError from '../erros/api.error.js';
+import formatUserResponse from '../utils/formatUserResponse.js';
 
 const userProfileController = {
   // Profil utilisateur
@@ -13,28 +14,9 @@ const userProfileController = {
         throw new ApiError(404, 'Profil non trouvé');
       }
       
-      // Structurer la réponse avec les informations d'abonnement
-      const response = {
-        id: profile.id,
-        username: profile.username,
-        email: profile.email,
-        role: profile.role,
-        household_members: profile.household_members,
-        preferences: profile.preferences,
-        subscription: {
-          type: profile.subscription_type || null,
-          isActive: profile.subscription_status === 'active',
-          status: profile.subscription_status || null,
-          startDate: profile.subscription_start_date || null,
-          endDate: profile.subscription_end_date || null
-        },
-        created_at: profile.created_at,
-        updated_at: profile.updated_at
-      };
-      
       return res.status(200).json({
         status: 'success',
-        data: response
+        data: formatUserResponse(profile)  // Utiliser formatUserResponse
       });
     } catch (err) {
       throw err;
@@ -62,7 +44,7 @@ const userProfileController = {
       
       return res.status(200).json({
         status: 'success',
-        data: updatedProfile
+        data: formatUserResponse(updatedProfile)
       });
     } catch (err) {
       throw err;

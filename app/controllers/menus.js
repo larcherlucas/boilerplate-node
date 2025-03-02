@@ -42,7 +42,7 @@ const menusController = {
 
   async generateWeeklyMenu(req, res, next) {
     try {
-      // Validation des options du générateur
+      // Validation des options
       const { error, value } = weeklyMenuSchema.validate(req.body);
       if (error) {
         throw new ApiError(400, error.message);
@@ -50,43 +50,52 @@ const menusController = {
       
       // Options par défaut
       const options = {
-        numberOfMeals: req.body.numberOfMeals || 3, // petit-déjeuner, déjeuner, dîner par défaut
-        numberOfDays: req.body.numberOfDays || 7, // une semaine complète par défaut
-        includeFavorites: req.body.includeFavorites !== false, // inclure les favoris par défaut
-        familySize: req.body.familySize || 1, // taille du foyer par défaut
-        startDate: req.body.startDate || new Date().toISOString().split('T')[0], // aujourd'hui par défaut
+        numberOfMeals: req.body.numberOfMeals || 3,
+        numberOfDays: req.body.numberOfDays || 7,
+        includeFavorites: req.body.includeFavorites !== false,
+        familySize: req.body.familySize || 1,
+        startDate: req.body.startDate || new Date().toISOString().split('T')[0],
         mealTypes: req.body.mealTypes || ['breakfast', 'lunch', 'dinner']
       };
-
-      // 1. Récupérer les restrictions alimentaires de l'utilisateur
+  
+      // Déterminer le type d'utilisateur pour l'accès aux recettes
+      const userType = req.subscription?.active ? req.subscription.type : 'none';
+  
+      // Récupérer les restrictions alimentaires
       const dietaryRestrictions = await dietaryRestrictionsDataMapper.findAllByUser(req.user.id);
       
-      // 2. Récupérer des recettes éligibles basées sur les restrictions et la taille du foyer
+      // Récupérer des recettes éligibles basées sur les restrictions et la taille du foyer
       const eligibleRecipes = await menusDataMapper.getEligibleRecipes(
         dietaryRestrictions,
         options.familySize,
-        options.mealTypes
+        options.mealTypes,
+        userType
       );
       
-      // 3. Récupérer les recettes favorites si demandé
+      // Récupérer les recettes favorites si demandé
       let favoriteRecipes = [];
       if (options.includeFavorites) {
         favoriteRecipes = await menusDataMapper.getFavoriteRecipes(req.user.id);
+        
+        // Filtrer les recettes premium si l'utilisateur n'a pas d'abonnement
+        if (userType === 'none') {
+          favoriteRecipes = favoriteRecipes.filter(recipe => !recipe.is_premium);
+        }
       }
       
-      // 4. Générer le programme des repas
+      // Générer le planning des repas
       const meal_schedule = generateMealSchedule(
         eligibleRecipes,
         favoriteRecipes,
         options
       );
       
-      // 5. Calculer la période de validité
+      // Calculer la période de validité
       const valid_from = new Date(options.startDate);
       const valid_to = new Date(valid_from);
       valid_to.setDate(valid_to.getDate() + options.numberOfDays - 1);
       
-      // 6. Créer le menu hebdomadaire
+      // Créer le menu
       const menuData = {
         meal_schedule,
         valid_from,
@@ -97,7 +106,10 @@ const menusController = {
       };
       
       const newMenu = await menusDataMapper.createWeeklyMenu(req.user.id, menuData);
-      res.status(201).json(newMenu);
+      res.status(201).json({
+        status: 'success',
+        data: newMenu
+      });
     } catch (error) {
       next(error);
     }

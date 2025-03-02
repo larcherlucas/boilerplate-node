@@ -4,23 +4,63 @@ import ApiError from '../erros/api.error.js';
 const recipeController = {
   getAllRecipes: async (req, res) => {
     try {
-      // Récupération des query parameters pour le filtrage
-      const { meal_type, difficulty_level, season, is_premium } = req.query;
-      const filters = { meal_type, difficulty_level, season, is_premium };
-
-      const recipes = await recipeDataMapper.findAllRecipes(filters);
+      // Récupérer les filtres de la requête
+      const { meal_type, difficulty_level, season } = req.query;
+      const filters = { meal_type, difficulty_level, season };
       
-      if (recipes.length === 0) {
-        return res.status(200).json({
-          status: 'success',
-          message: 'No recipes found with these criteria',
-          data: []
-        });
+      // Pagination
+      const limit = req.query.limit ? parseInt(req.query.limit, 10) : null;
+      const offset = req.query.offset ? parseInt(req.query.offset, 10) : 0;
+      const pagination = { limit, offset };
+      
+      // Récupérer les recettes accessibles selon le niveau d'accès
+      const recipes = await recipeDataMapper.findAccessibleRecipes(
+        req.accessLevel || 'none',
+        filters,
+        pagination
+      );
+      
+      // Formater la réponse pour correspondre au front-end
+      return res.status(200).json({
+        status: 'success',
+        data: recipes,
+        subscription: {
+          active: req.subscription?.active || false,
+          type: req.subscription?.type || 'none'
+        },
+        totalCount: await recipeDataMapper.countAccessibleRecipes(req.accessLevel || 'none', filters)
+      });
+    } catch (err) {
+      throw err;
+    }
+  },
+  
+  getOneRecipe: async (req, res) => {
+    try {
+      const recipeId = parseInt(req.params.id, 10);
+      
+      if (isNaN(recipeId)) {
+        throw new ApiError(400, 'ID de recette invalide');
+      }
+      
+      const recipe = await recipeDataMapper.findOneRecipe(recipeId);
+      
+      if (!recipe) {
+        throw new ApiError(404, 'Recette non trouvée');
+      }
+      
+      // Vérifier l'accès premium
+      if (recipe.is_premium) {
+        const hasAccess = req.subscription?.active || false;
+        
+        if (!hasAccess) {
+          throw new ApiError(403, 'Cette recette requiert un abonnement premium');
+        }
       }
       
       return res.status(200).json({
         status: 'success',
-        data: recipes
+        data: recipe
       });
     } catch (err) {
       throw err;
@@ -49,29 +89,6 @@ const recipeController = {
         status: 'success',
         data: recipes,
         access_type: type
-      });
-    } catch (err) {
-      throw err;
-    }
-  },
-
-  getOneRecipe: async (req, res) => {
-    try {
-      const recipeId = parseInt(req.params.id, 10);
-      
-      if (isNaN(recipeId)) {
-        throw new ApiError(400, 'Invalid recipe ID');
-      }
-      
-      const recipe = await recipeDataMapper.findOneRecipe(recipeId);
-
-      if (!recipe) {
-        throw new ApiError(404, 'Recipe not found');
-      }
-
-      return res.status(200).json({
-        status: 'success',
-        data: recipe
       });
     } catch (err) {
       throw err;

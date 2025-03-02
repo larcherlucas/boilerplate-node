@@ -22,7 +22,7 @@ router.post(
   '/subscription',
   authMiddleware,
   paymentRateLimiter,
-  validate(paymentSchema),
+  validate(paymentSchema, 'body'),
   cw(paymentController.createOrUpdateSubscription)
 );
 

@@ -61,15 +61,26 @@ const accountDataMapper = {
     }
   },
 
-  async findUserForAuth(id) {
+  async findUserForAuth(userId) {
     try {
-      const result = await pool.query(
-        `SELECT id, username, email, role, subscription_status 
-         FROM "users" 
-         WHERE id = $1;`,
-        [id]
-      );
-      return result.rows[0];
+      const query = `
+        SELECT id, email, role, subscription, password_hash
+        FROM users
+        WHERE id = $1
+      `;
+      const result = await pool.query(query, [userId]);
+      
+      if (result.rows.length === 0) {
+        return null;
+      }
+      
+      const user = result.rows[0];
+      
+      // Ajouter les propriétés d'abonnement au niveau supérieur pour compatibilité
+      user.subscription_status = user.subscription?.status || 'inactive';
+      user.subscription_end_date = user.subscription?.endDate || null;
+      
+      return user;
     } catch (error) {
       throw new DbError(error.message);
     }
@@ -237,6 +248,36 @@ const accountDataMapper = {
     }
   },
 
+async checkSubscriptionStatus(userId) {
+  try {
+    const result = await pool.query(
+      `SELECT id, subscription_type, subscription_status, subscription_end_date 
+       FROM "users" 
+       WHERE id = $1;`,
+      [userId]
+    );
+    
+    const user = result.rows[0];
+    if (!user) return { active: false, type: 'none' };
+    
+    // Vérifier la validité de l'abonnement
+    const isActive = user.subscription_status === 'active' && 
+                     (!user.subscription_end_date || new Date(user.subscription_end_date) > new Date());
+    
+    // Si l'abonnement a expiré mais est encore marqué comme actif, mettre à jour
+    if (!isActive && user.subscription_status === 'active') {
+      await this.updateAccount(user.id, { subscription_status: 'expired' });
+    }
+    
+    return { 
+      active: isActive, 
+      type: isActive ? user.subscription_type : 'none',
+      expiryDate: user.subscription_end_date
+    };
+  } catch (error) {
+    throw new DbError(error.message);
+  }
+},
   async updateHouseholdMembers(userId, householdData) {
     try {
       const result = await pool.query(
