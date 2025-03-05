@@ -7,7 +7,21 @@ const menusDataMapper = {
     const result = await pool.query(query, [userId]);
     return result.rows;
   },
-
+  async findActiveWeeklyMenu(userId) {
+    const query = `
+      SELECT * 
+      FROM weekly_menus 
+      WHERE user_id = $1 
+        AND status = 'active' 
+        AND valid_from <= CURRENT_TIMESTAMP 
+        AND valid_to >= CURRENT_TIMESTAMP 
+      ORDER BY generated_at DESC 
+      LIMIT 1
+    `;
+    
+    const result = await pool.query(query, [userId]);
+    return result.rows[0] || null;
+  },
   async findWeeklyMenuById(id, userId) {
     const query = 'SELECT * FROM weekly_menus WHERE id = $1 AND user_id = $2';
     const result = await pool.query(query, [id, userId]);

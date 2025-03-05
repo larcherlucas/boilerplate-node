@@ -12,6 +12,7 @@ router.use(authMiddleware);
 router.use(detectAccessLevel);
 
 router.get('/weekly-menus', menusController.getWeeklyMenus);
+router.get('/active-weekly-menu', menusController.getActiveWeeklyMenu);
 router.get('/weekly-menus/:id(\\d+)', menusController.getWeeklyMenuById);
 router.post('/weekly-menus', menusController.createWeeklyMenu);
 router.post('/weekly-menus/generate', menusController.generateWeeklyMenu);

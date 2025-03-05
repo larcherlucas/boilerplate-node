@@ -220,8 +220,53 @@ const recipeDataMapper = {
       throw new DbError(error.message);
     }
   },
-  // Ajouter à app/datamappers/recipe.js
 
+async countAccessibleRecipes(userType = 'none', filters = {}) {
+  try {
+    // Construire une requête qui compte plutôt que de retourner les lignes complètes
+    let query, values = [];
+    
+    if (userType === 'none') {
+      // Pour les utilisateurs sans abonnement: compte le nombre de recettes non-premium + premium disponibles
+      query = `
+        SELECT 
+          (SELECT COUNT(*) FROM recipes WHERE is_premium = false) +
+          LEAST(
+            (SELECT COUNT(*) FROM recipes WHERE is_premium = true),
+            (SELECT quota_limit FROM access_quotas WHERE user_type = 'none' AND feature_name = 'recipes') -
+            (SELECT COUNT(*) FROM recipes WHERE is_premium = false)
+          ) AS total_count
+      `;
+    } else {
+      // Pour les utilisateurs avec abonnement: toutes les recettes avec filtres appliqués
+      query = `
+        SELECT COUNT(*) AS total_count
+        FROM recipes r
+        WHERE 1=1
+      `;
+      
+      // Ajouter les filtres spécifiques si fournis
+      let paramIndex = 1;
+      if (filters.meal_type) {
+        query += ` AND r.meal_type = $${paramIndex++}`;
+        values.push(filters.meal_type);
+      }
+      if (filters.difficulty_level) {
+        query += ` AND r.difficulty_level = $${paramIndex++}`;
+        values.push(filters.difficulty_level);
+      }
+      if (filters.season) {
+        query += ` AND r.season = $${paramIndex++}`;
+        values.push(filters.season);
+      }
+    }
+    
+    const result = await pool.query(query, values);
+    return parseInt(result.rows[0].total_count, 10);
+  } catch (error) {
+    throw new DbError(error.message);
+  }
+},
 async findAccessibleRecipes(userType = 'none', filters = {}, pagination = {}) {
   try {
     // Récupérer le quota pour les utilisateurs non abonnés

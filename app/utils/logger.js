@@ -10,8 +10,11 @@ const {
 const logger = winston.createLogger({
   level: 'http',
   defaultMeta: { service: 'meal-api' },
-  format: winston.format.json(),
-  transports: [
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.json()
+  ), 
+    transports: [
     new winston.transports.Console({ format: winston.format.simple() }),
     new winston.transports.File({ filename: path.join(logDirectory, 'error.log'), level: 'error' }),
     new winston.transports.File({ filename: path.join(logDirectory, 'combined.log'), level: 'info' }),

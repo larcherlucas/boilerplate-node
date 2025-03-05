@@ -11,6 +11,7 @@
     "testRouter": "pnpm run resetDbTest && mocha --recursive ./app/**/*.test.js --require test.config.js --require test.hooks.js",
     "testDatamappers": "pnpm run resetDbTest && mocha --recursive ./app/datamappers/test/**/*.test.js --require test.config.js --require test.hooks.js",
     "dev": "nodemon --config nodemon.json server.js",
+    "test": "mocha --recursive ./tests/**/*.test.js --require test.config.js --require test.hooks.js",
     "generate-keys": "node ./app/scripts/generateKeys.js"
   },
   "keywords": [],

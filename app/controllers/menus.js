@@ -14,7 +14,28 @@ const menusController = {
       next(error);
     }
   },
-
+  async getActiveWeeklyMenu(req, res, next) {
+    try {
+      const activeMenu = await menusDataMapper.findActiveWeeklyMenu(req.user.id);
+      
+      if (!activeMenu) {
+        // Si aucun menu actif n'est trouvé, renvoyer une réponse 404
+        return res.status(404).json({
+          status: 'error',
+          error: 'Aucun menu actif trouvé',
+          data: null
+        });
+      }
+  
+      res.json({
+        status: 'success',
+        data: activeMenu,
+        message: 'Menu actif récupéré avec succès'
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
   async getWeeklyMenuById(req, res, next) {
     try {
       const menu = await menusDataMapper.findWeeklyMenuById(req.params.id, req.user.id);
