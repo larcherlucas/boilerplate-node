@@ -1,92 +1,140 @@
-import ApiError from '../erros/api.error.js';
 import favoritesDataMapper from '../datamappers/favorites.js';
-import { favoriteSchema } from '../validations/schemas/favorites.js';
 
 const favoritesController = {
-async getAll(req, res, next) {
-  try {
-    // Vérifier si l'utilisateur est authentifié
-    if (!req.user) {
-      throw new ApiError(401, 'Authentification requise');
-    }
-    
-    // Vérifier le statut d'abonnement
-    const hasActiveSubscription = req.subscription?.active || false;
-    
-    // Récupérer les favoris adaptés au statut d'abonnement
-    const favorites = await favoritesDataMapper.findAllByUser(
-      req.user.id, 
-      hasActiveSubscription
-    );
-    
-    res.status(200).json({
-      status: 'success',
-      data: favorites,
-      subscription: {
-        active: hasActiveSubscription,
-        type: req.subscription?.type || 'none'
-      }
-    });
-  } catch (error) {
-    next(error);
-  }
-},
-
-async create(req, res, next) {
-  try {
-    const { error, value } = favoriteSchema.validate(req.body);
-    if (error) {
-      throw new ApiError(400, error.message);
-    }
-
-    // Vérifier si la recette existe
-    const recipe = await recipeDataMapper.findOneRecipe(value.recipe_id);
-    if (!recipe) {
-      throw new ApiError(404, 'Recette non trouvée');
-    }
-    
-    // Vérifier l'abonnement pour les recettes premium
-    if (recipe.is_premium) {
-      const hasActiveSubscription = req.subscription?.active || false;
-      if (!hasActiveSubscription) {
-        throw new ApiError(403, 'Abonnement premium requis pour ajouter cette recette aux favoris');
-      }
-    }
-
-    // Vérifier si déjà en favori
-    const existingFavorite = await favoritesDataMapper.findOne(req.user.id, value.recipe_id);
-    if (existingFavorite) {
-      throw new ApiError(400, 'Recette déjà dans vos favoris');
-    }
-
-    const newFavorite = await favoritesDataMapper.create(req.user.id, value.recipe_id);
-    res.status(201).json({
-      status: 'success',
-      data: newFavorite
-    });
-  } catch (error) {
-    next(error);
-  }
-},
-
-  async delete(req, res, next) {
+  // Récupérer tous les favoris d'un utilisateur
+  async getAll(req, res) {
     try {
-      const deletedFavorite = await favoritesDataMapper.delete(req.user.id, req.params.recipeId);
-      if (!deletedFavorite) {
-        throw new ApiError(404, 'Favorite not found');
-      }
-      res.status(204).end();
+      const userId = req.user.id;
+      
+      // Vérifier si l'utilisateur a un abonnement actif
+      const hasActiveSubscription = 
+        req.user.subscription_status === 'active' || 
+        (req.subscription && req.subscription.active) ||
+        req.user.role === 'admin' ||
+        req.user.role === 'premium';
+      
+      // Récupérer les favoris
+      const favorites = await favoritesDataMapper.findAllByUser(userId, hasActiveSubscription);
+      
+      res.json({
+        status: 'success',
+        data: favorites,
+        subscription: {
+          active: hasActiveSubscription,
+          type: req.user.subscription_type || 'none'
+        }
+      });
     } catch (error) {
-      next(error);
+      console.error('Erreur lors de la récupération des favoris:', error);
+      res.status(500).json({
+        status: 'error',
+        message: 'Erreur lors de la récupération des favoris'
+      });
     }
   },
-
-  async checkFavorite(req, res, next) {
+  
+  // Ajouter un favori
+  async create(req, res) {
     try {
-      const favorite = await favoritesDataMapper.findOne(req.user.id, req.params.recipeId);
-      res.json({ isFavorite: !!favorite });
+      const userId = req.user.id;
+      const { recipe_id } = req.body;
+      
+      if (!recipe_id) {
+        return res.status(400).json({
+          status: 'error',
+          message: 'L\'ID de la recette est requis'
+        });
+      }
+      
+      // Vérifier si la recette existe
+      const recipe = await favoritesDataMapper.checkRecipeExists(recipe_id);
+      
+      if (!recipe) {
+        return res.status(404).json({
+          status: 'error',
+          message: 'Recette non trouvée'
+        });
+      }
+      
+      // Vérifier si la recette est premium et si l'utilisateur y a accès
+      if (recipe.is_premium) {
+        const hasAccess = 
+          req.user.subscription_status === 'active' || 
+          (req.subscription && req.subscription.active) ||
+          req.user.role === 'admin' ||
+          req.user.role === 'premium';
+        
+        if (!hasAccess) {
+          return res.status(403).json({
+            status: 'error',
+            message: 'Cette recette requiert un abonnement premium'
+          });
+        }
+      }
+      
+      // Créer le favori
+      const favorite = await favoritesDataMapper.create(userId, recipe_id);
+      
+      res.status(201).json({
+        status: 'success',
+        data: favorite,
+        message: 'Recette ajoutée aux favoris'
+      });
     } catch (error) {
-      next(error);
+      console.error('Erreur lors de l\'ajout du favori:', error);
+      res.status(500).json({
+        status: 'error',
+        message: 'Erreur lors de l\'ajout du favori'
+      });
+    }
+  },
+  
+  // Supprimer un favori
+  async delete(req, res) {
+    try {
+      const userId = req.user.id;
+      const recipeId = req.params.recipeId;
+      
+      const favorite = await favoritesDataMapper.delete(userId, recipeId);
+      
+      if (!favorite) {
+        return res.status(404).json({
+          status: 'error',
+          message: 'Favori non trouvé'
+        });
+      }
+      
+      res.json({
+        status: 'success',
+        message: 'Recette retirée des favoris'
+      });
+    } catch (error) {
+      console.error('Erreur lors de la suppression du favori:', error);
+      res.status(500).json({
+        status: 'error',
+        message: 'Erreur lors de la suppression du favori'
+      });
+    }
+  },
+  
+  // Vérifier si une recette est dans les favoris
+  async checkFavorite(req, res) {
+    try {
+      const userId = req.user.id;
+      const recipeId = req.params.recipeId;
+      
+      const favorite = await favoritesDataMapper.findOne(userId, recipeId);
+      
+      res.json({
+        status: 'success',
+        isFavorite: !!favorite
+      });
+    } catch (error) {
+      console.error('Erreur lors de la vérification du favori:', error);
+      res.status(500).json({
+        status: 'error',
+        message: 'Erreur lors de la vérification du favori'
+      });
     }
   }
 };
