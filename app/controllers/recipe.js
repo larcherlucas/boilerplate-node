@@ -1,6 +1,7 @@
 import recipeDataMapper from '../datamappers/recipe.js';
 import ApiError from '../erros/api.error.js';
 import logger from '../utils/logger.js';
+import cacheService from '../services/cache.service.js';
 
 // Fonction utilitaire pour déterminer le niveau d'accès
 function determineAccessLevel(req) {
@@ -76,6 +77,13 @@ function formatSteps(steps) {
   }];
 }
 
+// Générer une clé de cache basée sur les filtres et le niveau d'accès
+function generateCacheKey(prefix, filters, accessLevel, pagination) {
+  const filterKey = JSON.stringify(filters || {});
+  const paginationKey = JSON.stringify(pagination || {});
+  return `${prefix}_${accessLevel}_${filterKey}_${paginationKey}`;
+}
+
 const recipeController = {
   getAllRecipes: async (req, res) => {
     try {
@@ -120,27 +128,39 @@ const recipeController = {
       
       // Déterminer le niveau d'accès de l'utilisateur
       const accessLevel = determineAccessLevel(req);
-      console.log(`Niveau d'accès utilisateur: ${accessLevel}`);
       
-      // Récupérer les recettes accessibles selon le niveau d'accès
-      const recipes = await recipeDataMapper.findAccessibleRecipes(
-        accessLevel,
-        filters,
-        pagination
+      // Générer la clé de cache
+      const cacheKey = generateCacheKey('recipes_list', filters, accessLevel, pagination);
+      
+      // Utiliser le service de cache pour éviter de requêter la BDD inutilement
+      const result = await cacheService.getCachedData(
+        cacheKey,
+        async () => {
+          logger.info(`Cache miss pour ${cacheKey} - Chargement depuis la BDD`);
+          // Récupérer les recettes accessibles selon le niveau d'accès
+          const recipes = await recipeDataMapper.findAccessibleRecipes(
+            accessLevel,
+            filters,
+            pagination
+          );
+          
+          // Compter le nombre total de recettes correspondant aux filtres
+          const totalCount = await recipeDataMapper.countAccessibleRecipes(accessLevel, filters);
+          
+          return { recipes, totalCount };
+        },
+        30 * 60 // TTL de 30 minutes
       );
-      
-      // Compter le nombre total de recettes correspondant aux filtres
-      const totalCount = await recipeDataMapper.countAccessibleRecipes(accessLevel, filters);
       
       // Formater la réponse pour correspondre au front-end
       return res.status(200).json({
         status: 'success',
-        data: recipes,
+        data: result.recipes,
         subscription: {
           active: req.subscription?.active || false,
           type: req.subscription?.type || 'none'
         },
-        totalCount
+        totalCount: result.totalCount
       });
     } catch (err) {
       console.error('Erreur lors de la récupération des recettes:', err);
@@ -162,7 +182,21 @@ const recipeController = {
         headers: req.headers
       });
       
-      const recipe = await recipeDataMapper.findOneRecipe(recipeId);
+      // Déterminer le niveau d'accès
+      const accessLevel = determineAccessLevel(req);
+      
+      // Générer la clé de cache
+      const cacheKey = `recipe_${recipeId}_${accessLevel}`;
+      
+      // Utiliser le service de cache
+      const recipe = await cacheService.getCachedData(
+        cacheKey,
+        async () => {
+          logger.info(`Cache miss pour ${cacheKey} - Chargement depuis la BDD`);
+          return await recipeDataMapper.findOneRecipe(recipeId);
+        },
+        60 * 60 // TTL de 60 minutes
+      );
       
       if (!recipe) {
         throw new ApiError(404, 'Recette non trouvée');
@@ -230,20 +264,32 @@ const recipeController = {
         throw new ApiError(400, 'Paramètre de type invalide. Doit être "free" ou "premium"');
       }
       
-      let recipes;
+      // Déterminer le niveau d'accès
+      const accessLevel = determineAccessLevel(req);
       
-      if (type === 'free') {
-        // Pour les utilisateurs gratuits, limiter à 50 recettes
-        recipes = await recipeDataMapper.findFreeRecipes();
-      } else {
-        // Vérifier l'accès premium
-        if (determineAccessLevel(req) === 'none' || determineAccessLevel(req) === 'basic') {
-          throw new ApiError(403, 'Accès aux recettes premium nécessite un abonnement');
-        }
-        
-        // Pour les utilisateurs premium, toutes les recettes
-        recipes = await recipeDataMapper.findPremiumRecipes();
-      }
+      // Générer la clé de cache
+      const cacheKey = `recipes_${type}_${accessLevel}`;
+      
+      // Utiliser le service de cache
+      const recipes = await cacheService.getCachedData(
+        cacheKey,
+        async () => {
+          logger.info(`Cache miss pour ${cacheKey} - Chargement depuis la BDD`);
+          if (type === 'free') {
+            // Pour les utilisateurs gratuits, limiter à 50 recettes
+            return await recipeDataMapper.findFreeRecipes();
+          } else {
+            // Vérifier l'accès premium
+            if (determineAccessLevel(req) === 'none' || determineAccessLevel(req) === 'basic') {
+              throw new ApiError(403, 'Accès aux recettes premium nécessite un abonnement');
+            }
+            
+            // Pour les utilisateurs premium, toutes les recettes
+            return await recipeDataMapper.findPremiumRecipes();
+          }
+        },
+        30 * 60 // TTL de 30 minutes
+      );
       
       return res.status(200).json({
         status: 'success',
@@ -283,7 +329,11 @@ const recipeController = {
       };
       
       const newRecipe = await recipeDataMapper.createRecipe(recipeData);
-
+      
+      // Invalider les caches pertinents
+      cacheService.invalidateByPrefix('recipes_list');
+      cacheService.invalidateByPrefix(`recipes_${newRecipe.is_premium ? 'premium' : 'free'}`);
+      
       return res.status(201).json({
         status: 'success',
         data: newRecipe,
@@ -327,6 +377,16 @@ const recipeController = {
       }
 
       const updatedRecipe = await recipeDataMapper.updateRecipe(recipeId, updateData);
+      
+      // Invalider le cache pour cette recette
+      cacheService.del(`recipe_${recipeId}_admin`);
+      cacheService.del(`recipe_${recipeId}_premium`);
+      cacheService.del(`recipe_${recipeId}_basic`);
+      cacheService.del(`recipe_${recipeId}_none`);
+      
+      // Invalider également les listes qui pourraient contenir cette recette
+      cacheService.invalidateByPrefix('recipes_list');
+      cacheService.invalidateByPrefix(`recipes_${updatedRecipe.is_premium ? 'premium' : 'free'}`);
 
       return res.status(200).json({
         status: 'success',
@@ -360,12 +420,25 @@ const recipeController = {
         console.warn(`Accès non autorisé: L'utilisateur #${authorId} tente de supprimer la recette #${recipeId} créée par #${recipe.author_id}`);
         throw new ApiError(403, 'Non autorisé à supprimer cette recette');
       }
+      
+      // Mémoriser si la recette était premium pour invalider le bon cache
+      const isPremium = recipe.is_premium;
 
       const deleted = await recipeDataMapper.deleteRecipe(recipeId);
       
       if (!deleted) {
         throw new ApiError(500, 'Échec de la suppression de la recette');
       }
+      
+      // Invalider tous les caches relatifs à cette recette
+      cacheService.del(`recipe_${recipeId}_admin`);
+      cacheService.del(`recipe_${recipeId}_premium`);
+      cacheService.del(`recipe_${recipeId}_basic`);
+      cacheService.del(`recipe_${recipeId}_none`);
+      
+      // Invalider également les listes qui pourraient contenir cette recette
+      cacheService.invalidateByPrefix('recipes_list');
+      cacheService.invalidateByPrefix(`recipes_${isPremium ? 'premium' : 'free'}`);
 
       return res.status(204).end();
     } catch (err) {
@@ -382,18 +455,28 @@ const recipeController = {
         throw new ApiError(400, 'ID de recette invalide');
       }
       
-      const recipe = await recipeDataMapper.findOneRecipe(recipeId);
+      // Clé de cache spécifique pour les ingrédients
+      const cacheKey = `recipe_${recipeId}_ingredients`;
       
-      if (!recipe) {
-        throw new ApiError(404, 'Recette non trouvée');
-      }
-      
-      // Formater les ingrédients pour une utilisation cohérente
-      const formattedIngredients = formatIngredients(recipe.ingredients);
+      // Utiliser le service de cache
+      const ingredients = await cacheService.getCachedData(
+        cacheKey,
+        async () => {
+          logger.info(`Cache miss pour ${cacheKey} - Chargement depuis la BDD`);
+          const recipe = await recipeDataMapper.findOneRecipe(recipeId);
+          
+          if (!recipe) {
+            throw new ApiError(404, 'Recette non trouvée');
+          }
+          
+          return formatIngredients(recipe.ingredients);
+        },
+        60 * 60 // TTL de 60 minutes
+      );
       
       return res.status(200).json({
         status: 'success',
-        data: formattedIngredients
+        data: ingredients
       });
     } catch (err) {
       console.error(`Erreur lors de la récupération des ingrédients de la recette #${req.params.id}:`, err);
@@ -440,6 +523,13 @@ const recipeController = {
       // Mettre à jour la recette
       const result = await recipeDataMapper.updateIngredients(recipeId, updatedIngredients);
       
+      // Invalider les caches
+      cacheService.del(`recipe_${recipeId}_ingredients`);
+      cacheService.del(`recipe_${recipeId}_admin`);
+      cacheService.del(`recipe_${recipeId}_premium`);
+      cacheService.del(`recipe_${recipeId}_basic`);
+      cacheService.del(`recipe_${recipeId}_none`);
+      
       return res.status(200).json({
         status: 'success',
         data: result,
@@ -485,6 +575,13 @@ const recipeController = {
       // Mettre à jour la recette
       await recipeDataMapper.updateIngredients(recipeId, updatedIngredients);
       
+      // Invalider les caches
+      cacheService.del(`recipe_${recipeId}_ingredients`);
+      cacheService.del(`recipe_${recipeId}_admin`);
+      cacheService.del(`recipe_${recipeId}_premium`);
+      cacheService.del(`recipe_${recipeId}_basic`);
+      cacheService.del(`recipe_${recipeId}_none`);
+      
       return res.status(204).end();
     } catch (err) {
       console.error(`Erreur lors de la suppression d'un ingrédient de la recette #${req.params.id}:`, err);
@@ -514,6 +611,13 @@ const recipeController = {
       // Mettre à jour la recette avec un tableau vide d'ingrédients
       await recipeDataMapper.updateIngredients(recipeId, []);
       
+      // Invalider les caches
+      cacheService.del(`recipe_${recipeId}_ingredients`);
+      cacheService.del(`recipe_${recipeId}_admin`);
+      cacheService.del(`recipe_${recipeId}_premium`);
+      cacheService.del(`recipe_${recipeId}_basic`);
+      cacheService.del(`recipe_${recipeId}_none`);
+      
       return res.status(204).end();
     } catch (err) {
       console.error(`Erreur lors de la suppression de tous les ingrédients de la recette #${req.params.id}:`, err);
@@ -531,7 +635,19 @@ const recipeController = {
         dietary_restrictions: req.query.restrictions ? req.query.restrictions.split(',') : []
       };
       
-      const suggestions = await recipeDataMapper.getSuggestions(userId, preferences);
+      // Clé de cache pour les suggestions
+      const cacheKey = `suggestions_${userId}_${preferences.current_season}`;
+      
+      // Utiliser le service de cache
+      const suggestions = await cacheService.getCachedData(
+        cacheKey,
+        async () => {
+          logger.info(`Cache miss pour ${cacheKey} - Chargement depuis la BDD`);
+          return await recipeDataMapper.getSuggestions(userId, preferences);
+        },
+        // TTL plus court pour les suggestions (15 minutes)
+        15 * 60
+      );
       
       return res.status(200).json({
         status: 'success',
