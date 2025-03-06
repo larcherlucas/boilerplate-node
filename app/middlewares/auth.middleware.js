@@ -42,7 +42,7 @@ const authMiddleware = async (req, res, next) => {
     console.log("Auth Header:", authHeader); // Debug: vérification du header
     
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      throw new ApiError(401, 'Aucun token fourni');
+      return res.status(401).json({ message: 'Aucun token fourni' });
     }
 
     // Extraire le token
@@ -58,26 +58,21 @@ const authMiddleware = async (req, res, next) => {
       const user = await accountDataMapper.findUserForAuth(decoded.userId);
       
       if (!user) {
-        throw new ApiError(401, "Utilisateur non trouvé");
+        return res.status(401).json({ message: "Utilisateur non trouvé" });
       }
       
       console.log("Utilisateur trouvé:", user); // Debug: vérification de l'utilisateur
       
-     // Vérifier le statut de l'abonnement
-if (user.subscription_status === 'cancelled') {
-  throw new ApiError(401, "Compte désactivé ou abonnement annulé");
-}
+      // Vérifier le statut de l'abonnement
+      if (user.subscription_status === 'cancelled') {
+        return res.status(401).json({ message: "Compte désactivé ou abonnement annulé" });
+      }
 
-// Vérifier si l'abonnement est expiré
-if (user.subscription_end_date && new Date(user.subscription_end_date) < new Date()) {
-  // Mettre à jour le statut si nécessaire
-  await accountDataMapper.updateAccount(user.id, { subscription_status: 'expired' });
-  throw new ApiError(401, "Abonnement expiré");
-}
-
-      // Vérifier l'accès aux fonctionnalités premium
-      if (req.originalUrl.includes('/premium') && user.role !== 'premium' && user.role !== 'admin') {
-        throw new ApiError(403, 'Abonnement premium requis');
+      // Vérifier si l'abonnement est expiré
+      if (user.subscription_end_date && new Date(user.subscription_end_date) < new Date()) {
+        // Mettre à jour le statut si nécessaire
+        await accountDataMapper.updateAccount(user.id, { subscription_status: 'expired' });
+        return res.status(401).json({ message: "Abonnement expiré" });
       }
 
       // Ajouter les informations de l'utilisateur à l'objet request
@@ -85,22 +80,24 @@ if (user.subscription_end_date && new Date(user.subscription_end_date) < new Dat
         id: user.id,
         email: user.email,
         role: user.role,
-        subscription_status: user.subscription_status
+        subscription_status: user.subscription_status,
+        subscription_type: user.subscription_type
       };
 
       next();
     } catch (err) {
       console.error("Erreur lors de la vérification du token:", err); // Debug: afficher l'erreur
       if (err.name === 'JsonWebTokenError') {
-        throw new ApiError(401, 'Token invalide');
+        return res.status(401).json({ message: 'Token invalide' });
       }
       if (err.name === 'TokenExpiredError') {
-        throw new ApiError(401, 'Token expiré');
+        return res.status(401).json({ message: 'Token expiré' });
       }
-      throw err;
+      return res.status(500).json({ message: 'Erreur de serveur' });
     }
   } catch (error) {
-    next(error);
+    console.error('Erreur dans authMiddleware:', error);
+    return res.status(500).json({ message: 'Erreur de serveur' });
   }
 };
 

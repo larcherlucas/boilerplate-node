@@ -29,20 +29,38 @@ export const checkActiveSubscription = async (req, res, next) => {
  * Middleware pour détecter le niveau d'accès de l'utilisateur
  * sans bloquer la requête
  */
+// subscription.middleware.js
 export const detectAccessLevel = async (req, res, next) => {
   try {
-    // Par défaut: 'none'
-    req.accessLevel = 'none';
+    // L'utilisateur est déjà authentifié grâce au middleware auth
+    const user = req.user;
     
-    if (req.user) {
-      const subscription = await checkSubscriptionStatus(req.user.id);
-      req.accessLevel = subscription.active ? subscription.type : 'none';
-      req.subscription = subscription;
+    if (!user) {
+      req.subscription = { active: false, type: 'none' };
+      return next();
     }
+    
+    const subscriptionStatus = await checkSubscriptionStatus(user.id);
+    
+    // DEBUG: Logguer le statut d'abonnement
+    console.log(`Statut d'abonnement pour l'utilisateur ${user.id}:`, {
+      active: subscriptionStatus.active,
+      type: subscriptionStatus.type,
+      role: user.role
+    });
+    
+    req.subscription = {
+      active: subscriptionStatus.active || 
+              user.role === 'premium' || 
+              user.role === 'admin',
+      type: subscriptionStatus.type
+    };
     
     next();
   } catch (error) {
-    next(error);
+    console.error('Erreur lors de la détection du niveau d\'accès:', error);
+    req.subscription = { active: false, type: 'none' };
+    next();
   }
 };
 
@@ -53,32 +71,64 @@ export const checkRecipeAccess = async (req, res, next) => {
   try {
     const recipeId = parseInt(req.params.id, 10);
     
-    if (isNaN(recipeId)) {
-      throw new ApiError(400, 'ID de recette invalide');
-    }
+    console.log('Contexte de la requête:', {
+      recipeId,
+      user: req.user,
+      subscription: req.subscription,
+      headers: req.headers
+    });
     
     const recipe = await recipeDataMapper.findOneRecipe(recipeId);
     
     if (!recipe) {
-      throw new ApiError(404, 'Recette non trouvée');
+      return res.status(404).json({ message: 'Recette non trouvée' });
     }
+    
+    // Log détaillé pour comprendre le contexte
+    console.log('Vérification de l\'accès à la recette:', {
+      recipeId,
+      isPremium: recipe.is_premium,
+      userAuthenticated: !!req.user,
+      userRole: req.user?.role,
+      subscriptionStatus: req.user?.subscription_status,
+      subscriptionActive: req.subscription?.active
+    });
     
     // Si recette non premium, autoriser l'accès
     if (!recipe.is_premium) {
       return next();
     }
     
-    // Pour les recettes premium, vérifier l'abonnement
-    if (req.user) {
-      const subscription = await checkSubscriptionStatus(req.user.id);
-      if (subscription.active) {
-        return next();
-      }
+    // Vérifier si l'utilisateur a accès aux recettes premium
+    const isAdmin = req.user?.role === 'admin';
+    const isPremium = req.user?.role === 'premium';
+    const hasActiveSubscription = 
+      req.subscription?.active || 
+      req.user?.subscription_status === 'active';
+    
+    console.log('Conditions d\'accès :', {
+      isAdmin,
+      isPremium,
+      hasActiveSubscription
+    });
+    
+    if (isAdmin || isPremium || hasActiveSubscription) {
+      return next();
     }
     
-    throw new ApiError(403, 'Cette recette nécessite un abonnement premium');
+    return res.status(403).json({ 
+      message: 'Cette recette nécessite un abonnement premium',
+      requiresSubscription: true,
+      recipePartial: {
+        id: recipe.id,
+        title: recipe.title,
+        image_url: recipe.image_url,
+        is_premium: true
+      }
+    });
   } catch (error) {
-    next(error);
+    console.error('Erreur dans checkRecipeAccess:', error);
+    return res.status(500).json({ message: 'Erreur de serveur' });
   }
 };
 

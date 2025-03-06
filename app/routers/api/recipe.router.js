@@ -12,7 +12,7 @@ const router = express.Router();
 // Attention à l'ordre: les routes plus spécifiques doivent venir avant les routes avec paramètres
 router.get('/recipes/type/:type', detectAccessLevel, cw(recipeController.getRecipesByType));
 router.get('/recipes', detectAccessLevel, cw(recipeController.getAllRecipes));
-router.get('/recipes/:id', detectAccessLevel, checkRecipeAccess, cw(recipeController.getOneRecipe));
+router.get('/recipes/:id', authMiddleware, detectAccessLevel, checkRecipeAccess, cw(recipeController.getOneRecipe));
 router.get('/recipes/:id/ingredients', detectAccessLevel, checkRecipeAccess, cw(recipeController.getIngredients));
 
 // Routes protégées (nécessitent une authentification)
