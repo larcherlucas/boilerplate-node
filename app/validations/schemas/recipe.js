@@ -125,6 +125,7 @@
 
     image_url: Joi.string()
       .uri()
+      .allow('', null)
       .optional()
       .messages({
         'string.uri': 'L\'URL de l\'image n\'est pas valide'

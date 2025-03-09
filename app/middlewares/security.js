@@ -95,7 +95,7 @@ class SecurityMiddleware {
         origin: (origin, callback) => {
           const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || [];
           if (process.env.NODE_ENV === 'development') {
-            allowedOrigins.push('http://localhost:3000', 'http://localhost:5173');
+            allowedOrigins.push('http://localhost:3000', 'http://localhost:5173', 'http://localhost:5175');
           }
           
           if (!origin || allowedOrigins.includes(origin)) {

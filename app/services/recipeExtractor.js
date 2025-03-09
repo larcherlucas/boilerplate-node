@@ -207,9 +207,16 @@ class RecipeExtractor {
    * @returns {Object|null} Ingrédient structuré ou null si impossible à parser
    */
   static parseIngredient(ingredientText) {
+    // Nettoyer d'abord les marqueurs Markdown et autres symboles
+    const cleanText = ingredientText
+      .replace(/^\s*\*\s*/, '')  // Supprimer les astérisques de liste markdown
+      .replace(/\*\*/g, '')      // Supprimer les marqueurs de gras
+      .replace(/\*/g, '')        // Supprimer les marqueurs d'italique
+      .trim();
+    
     // Expressions régulières pour extraire quantité, unité et nom
     const fullRegex = /^(?:(\d+(?:[,.]\d+)?)\s*)?(?:([a-zéèêëàâäôöùûüç]+\.?)\s+)?(?:de\s+)?(.+)$/i;
-    const match = ingredientText.match(fullRegex);
+    const match = cleanText.match(fullRegex);
     
     if (!match) return null;
     
@@ -238,7 +245,8 @@ class RecipeExtractor {
         'cc': 'cuillère à café',
         'càc': 'cuillère à café',
         'pièce': 'pièce',
-        'pièces': 'pièce'
+        'pièces': 'pièce',
+        'gousse': 'pièce'
       };
       
       unit = unitMap[unit] || unit;
@@ -271,26 +279,41 @@ class RecipeExtractor {
     const title = lines[0];
     
     // Chercher la description (les lignes suivantes jusqu'à trouver un mot clé comme "Ingrédients" ou "Préparation")
-    let descriptionLines = [];
+    const introLines = [];
     let currentSection = 'description';
     let ingredients = [];
     let steps = [];
+    let storageSteps = [];
     let prepTime = 0;
     let cookTime = 0;
     
     // Chercher les temps de préparation et cuisson
     const prepRegex = /préparation[:\s]+(\d+)[\s]*(min|minute|h|heure)/i;
-    const cookRegex = /cuisson[:\s]+(\d+)[\s]*(min|minute|h|heure)/i;
+    
+    // Différents motifs pour trouver le temps de cuisson
+    const cookTimePatterns = [
+      /cuisson[:\s]+(\d+)[\s]*(min|minute|h|heure)/i,
+      /cuire pendant (\d+)[\s]*(min|minute|h|heure)/i,
+      /pendant (\d+)[\s]*(min|minute|h|heure) [àa] feu/i,
+      /mijoter (\d+)[\s]*(min|minute|h|heure)/i
+    ];
     
     for (let i = 1; i < lines.length; i++) {
       const line = lines[i];
       
       // Détecter les changements de section
-      if (line.toLowerCase().includes('ingrédient')) {
+      if (line.toLowerCase().match(/ingr[ée]dients?|ce qu'il (?:vous )?faut/i)) {
         currentSection = 'ingredients';
         continue;
-      } else if (line.toLowerCase().match(/préparation|instructions|étapes|recette/i) && !line.match(prepRegex)) {
+      } else if (line.toLowerCase().match(/pr[ée]paration|instructions?|[ée]tapes?|recette|r[ée]alisation/i) 
+                && !line.match(prepRegex)) {
         currentSection = 'steps';
+        continue;
+      } else if (line.toLowerCase().match(/cuisson/i) && !cookTimePatterns.some(pattern => line.match(pattern))) {
+        currentSection = 'cooking';
+        continue;
+      } else if (line.toLowerCase().match(/conservation|stockage|conserver/i)) {
+        currentSection = 'storage';
         continue;
       }
       
@@ -298,7 +321,12 @@ class RecipeExtractor {
       if (currentSection === 'description') {
         // Chercher les temps dans la description
         const prepMatch = line.match(prepRegex);
-        const cookMatch = line.match(cookRegex);
+        
+        let cookMatch = null;
+        for (const pattern of cookTimePatterns) {
+          cookMatch = line.match(pattern);
+          if (cookMatch) break;
+        }
         
         if (prepMatch) {
           prepTime = parseInt(prepMatch[1], 10);
@@ -310,25 +338,32 @@ class RecipeExtractor {
           if (cookMatch[2].startsWith('h')) cookTime *= 60;
         }
         
+        // Ignorer les lignes qui ne sont pas significatives pour la description
+        if (line.match(/^\s*\*\s*|^\d+\/\d+|commentaires|étapes de la recette/i)) {
+          continue;
+        }
+        
         // Si la ligne ne contient pas uniquement des infos de temps, l'ajouter à la description
         if (!line.match(/^(préparation|cuisson|temps total)[\s:]/i)) {
-          descriptionLines.push(line);
+          introLines.push(line);
         }
       } else if (currentSection === 'ingredients') {
         // Traiter les ingrédients
         // Ignorer les lignes de type titre ou trop courtes
         if (line.length > 3 && !line.endsWith(':')) {
-          const parsedIngredient = this.parseIngredient(line);
+          // Nettoyer le texte des marqueurs Markdown
+          const cleanLine = line.replace(/^\s*\*\s*/, '').replace(/\*\*/g, '');
+          const parsedIngredient = this.parseIngredient(cleanLine);
           if (parsedIngredient) {
             ingredients.push(parsedIngredient);
           }
         }
-      } else if (currentSection === 'steps') {
+      } else if (currentSection === 'steps' || currentSection === 'cooking') {
         // Traiter les étapes
         // Ignorer les titres et lignes trop courtes
         if (line.length > 10 && !line.endsWith(':')) {
           // Supprimer les numéros d'étape éventuels
-          const cleanLine = line.replace(/^\d+[\.\)-]\s*/, '');
+          const cleanLine = line.replace(/^\d+[\.\)-]\s*/, '').replace(/^\s*\*\s*/, '');
           
           steps.push({
             order: steps.length + 1,
@@ -336,15 +371,42 @@ class RecipeExtractor {
             duration: 5 // Durée par défaut
           });
         }
+      } else if (currentSection === 'storage') {
+        // Collecter les informations de conservation pour les ajouter à la fin des étapes
+        if (line.length > 10 && !line.endsWith(':')) {
+          const cleanLine = line.replace(/^\d+[\.\)-]\s*/, '').replace(/^\s*\*\s*/, '');
+          storageSteps.push(cleanLine);
+        }
       }
     }
     
-    const description = descriptionLines.join(' ');
+    // Si des étapes de conservation ont été identifiées, les ajouter aux étapes
+    if (storageSteps.length > 0) {
+      steps.push({
+        order: steps.length + 1,
+        description: "Conservation: " + storageSteps.join(' '),
+        duration: 5
+      });
+    }
     
+    // Utiliser les premières lignes significatives comme description (max 3)
+    const significantIntroLines = introLines.filter(line => line.length > 5);
+    const description = significantIntroLines.length > 0 
+    ? significantIntroLines.slice(0, 3).join(' ') 
+    : "Recette délicieuse et facile à préparer.";    
     // Déterminer les autres attributs
     const mealType = this.determineMealType(title, description);
     const difficultyLevel = this.determineDifficulty(prepTime, cookTime);
     const season = this.determineSeason(ingredients);
+    
+    // Déterminer le nombre de portions en analysant le texte
+    let servings = 4; // Valeur par défaut
+    const servingsRegex = /pour\s+(\d+)\s+personne/i;
+    const servingsText = introLines.join(' ');
+    const servingsMatch = servingsText.match(servingsRegex);
+    if (servingsMatch) {
+      servings = parseInt(servingsMatch[1], 10);
+    }
     
     return {
       title,
@@ -355,7 +417,7 @@ class RecipeExtractor {
       meal_type: mealType,
       season,
       is_premium: false, // Par défaut
-      servings: 4, // Valeur par défaut
+      servings,
       ingredients,
       steps,
       origin: '',
@@ -373,10 +435,16 @@ class RecipeExtractor {
     const text = (title + ' ' + description).toLowerCase();
     
     if (text.match(/petit[- ]déjeuner|breakfast|brunch|matin/i)) return 'breakfast';
-    if (text.match(/dessert|gâteau|tarte sucrée|crème|glace|chocolat/i)) return 'dessert';
+    if (text.match(/dessert|gâteau|tarte sucrée|crème|glace|chocolat|compote/i)) return 'dessert';
     if (text.match(/goûter|snack|amuse[- ]bouche|apéritif|apéro/i)) return 'snack';
     if (text.match(/déjeuner|lunch|midi|entrée|salade/i)) return 'lunch';
     if (text.match(/dîner|dinner|soir|plat principal/i)) return 'dinner';
+    
+    // Logique supplémentaire pour les recettes pour bébés
+    if (text.match(/bébé|infant|nourrisson|purée/i)) {
+      // Les purées et compotes pour bébé peuvent être considérées comme snack
+      if (text.match(/purée|compote/i)) return 'snack';
+    }
     
     // Par défaut
     return 'dinner';
@@ -532,7 +600,8 @@ VALUES (${values.join(', ')});`;
       const recipeForValidation = {
         ...recipe,
         ingredients: JSON.parse(recipe.ingredients).ingredients,
-        steps: JSON.parse(recipe.steps).steps
+        steps: JSON.parse(recipe.steps).steps,
+        nutrition_info: JSON.parse(recipe.nutrition_info)
       };
       
       const { error, value } = recipeSchema.validate(recipeForValidation);
