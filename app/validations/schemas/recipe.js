@@ -54,6 +54,7 @@
 
     origin: Joi.string()
       .max(50)
+      .allow('', null)
       .optional(),
 
     prep_time: Joi.number()

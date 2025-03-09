@@ -1,6 +1,3 @@
--- Fichier de données test pour la base de données menuplanner
--- À exécuter après tables.sql
-
 -- Vérification de la structure des tables
 BEGIN;
 

@@ -11,7 +11,9 @@ import favoritesRouter from './favorites.router.js';
 import dietaryRestrictionsRouter from './dietaryRestrictions.router.js';
 import recipeReviewsRouter from './recipeReviews.router.js';
 import paymentRouter from './payment.router.js';
-import subscriptionPlansRouter from './subscriptionPlans.router.js'; // Nouveau routeur
+import subscriptionPlansRouter from './subscriptionPlans.router.js'; 
+import recipeExtractorRouter from './recipeExtractor.router.js';
+
 
 const router = express.Router();
 
@@ -44,6 +46,7 @@ router.use(menusRouter);
 router.use(favoritesRouter);
 router.use(dietaryRestrictionsRouter);
 router.use('/payment', paymentRouter);
+router.use('/extract', recipeExtractorRouter);
 
 // Error handler (404)
 router.use((_, __, next) => {

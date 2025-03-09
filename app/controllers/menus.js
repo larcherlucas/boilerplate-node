@@ -9,11 +9,15 @@ const menusController = {
   async getWeeklyMenus(req, res, next) {
     try {
       const menus = await menusDataMapper.findAllWeeklyMenus(req.user.id);
-      res.json(menus);
+      return res.status(200).json({
+        status: 'success',
+        data: menus
+      });
     } catch (error) {
       next(error);
     }
   },
+  
   async getActiveWeeklyMenu(req, res, next) {
     try {
       const activeMenu = await menusDataMapper.findActiveWeeklyMenu(req.user.id);
@@ -27,7 +31,7 @@ const menusController = {
         });
       }
   
-      res.json({
+      return res.status(200).json({
         status: 'success',
         data: activeMenu,
         message: 'Menu actif récupéré avec succès'
@@ -36,13 +40,18 @@ const menusController = {
       next(error);
     }
   },
+  
   async getWeeklyMenuById(req, res, next) {
     try {
       const menu = await menusDataMapper.findWeeklyMenuById(req.params.id, req.user.id);
       if (!menu) {
         throw new ApiError(404, 'Weekly menu not found');
       }
-      res.json(menu);
+      
+      return res.status(200).json({
+        status: 'success',
+        data: menu
+      });
     } catch (error) {
       next(error);
     }
@@ -54,8 +63,13 @@ const menusController = {
       if (error) {
         throw new ApiError(400, error.message);
       }
+      
       const newMenu = await menusDataMapper.createWeeklyMenu(req.user.id, value);
-      res.status(201).json(newMenu);
+      
+      return res.status(201).json({
+        status: 'success',
+        data: newMenu
+      });
     } catch (error) {
       next(error);
     }
@@ -63,75 +77,112 @@ const menusController = {
 
   async generateWeeklyMenu(req, res, next) {
     try {
+      console.log('generateWeeklyMenu - Body reçu:', req.body);
+      
       // Validation des options
       const { error, value } = weeklyMenuSchema.validate(req.body);
       if (error) {
+        console.error('Erreur de validation:', error);
         throw new ApiError(400, error.message);
       }
       
-      // Options par défaut
-      const options = {
-        numberOfMeals: req.body.numberOfMeals || 3,
-        numberOfDays: req.body.numberOfDays || 7,
-        includeFavorites: req.body.includeFavorites !== false,
-        familySize: req.body.familySize || 1,
-        startDate: req.body.startDate || new Date().toISOString().split('T')[0],
-        mealTypes: req.body.mealTypes || ['breakfast', 'lunch', 'dinner']
-      };
-  
-      // Déterminer le type d'utilisateur pour l'accès aux recettes
-      const userType = req.subscription?.active ? req.subscription.type : 'none';
-  
-      // Récupérer les restrictions alimentaires
-      const dietaryRestrictions = await dietaryRestrictionsDataMapper.findAllByUser(req.user.id);
+      console.log('Données validées:', value);
       
-      // Récupérer des recettes éligibles basées sur les restrictions et la taille du foyer
-      const eligibleRecipes = await menusDataMapper.getEligibleRecipes(
+      // Extraire les données validées
+      const { 
+        type, 
+        meal_schedule, 
+        valid_from, 
+        valid_to, 
+        family_size = 1, 
+        user_preferences 
+      } = value;
+      
+      // Déterminer le type d'utilisateur pour l'accès aux recettes
+      const userRole = req.user?.role || 'user';
+      console.log('Role utilisateur:', userRole);
+      
+      // Extraire les préférences et restrictions alimentaires
+      const excludedIngredients = user_preferences?.excludedIngredients || [];
+      const dietaryRestrictions = user_preferences?.dietaryRestrictions || [];
+      const mealTypes = user_preferences?.mealTypes || ['breakfast', 'lunch', 'dinner'];
+      
+      console.log('Préférences:', {
+        excludedIngredients,
         dietaryRestrictions,
-        options.familySize,
-        options.mealTypes,
-        userType
+        mealTypes
+      });
+      
+      // Préparer la liste combinée de restrictions alimentaires
+      const allRestrictions = [...excludedIngredients, ...dietaryRestrictions];
+      
+      // Récupérer des recettes éligibles
+      console.log('Récupération des recettes éligibles...');
+      const eligibleRecipes = await menusDataMapper.getEligibleRecipes(
+        allRestrictions,
+        family_size,
+        mealTypes,
+        100, // limite raisonnable
+        userRole
       );
       
-      // Récupérer les recettes favorites si demandé
+      console.log(`${eligibleRecipes.length} recettes éligibles trouvées`);
+      
+      // Récupérer les recettes favorites si disponible
       let favoriteRecipes = [];
-      if (options.includeFavorites) {
-        favoriteRecipes = await menusDataMapper.getFavoriteRecipes(req.user.id);
-        
-        // Filtrer les recettes premium si l'utilisateur n'a pas d'abonnement
-        if (userType === 'none') {
-          favoriteRecipes = favoriteRecipes.filter(recipe => !recipe.is_premium);
-        }
+      try {
+        favoriteRecipes = await favoritesDataMapper.getAll(req.user.id);
+        console.log(`${favoriteRecipes.length} recettes favorites trouvées`);
+      } catch (err) {
+        console.warn('Impossible de récupérer les favoris:', err);
       }
       
-      // Générer le planning des repas
-      const meal_schedule = generateMealSchedule(
+      // Générer le planning de repas
+      const options = {
+        numberOfMeals: 3,
+        numberOfDays: 7,
+        includeFavorites: favoriteRecipes.length > 0,
+        familySize: family_size,
+        mealTypes: mealTypes
+      };
+      
+      console.log('Génération du planning des repas...');
+      const filledMealSchedule = generateMealSchedule(
         eligibleRecipes,
         favoriteRecipes,
         options
       );
       
-      // Calculer la période de validité
-      const valid_from = new Date(options.startDate);
-      const valid_to = new Date(valid_from);
-      valid_to.setDate(valid_to.getDate() + options.numberOfDays - 1);
-      
-      // Créer le menu
+      // Créer le menu avec les données complètes
       const menuData = {
-        meal_schedule,
+        type,
+        meal_schedule: filledMealSchedule, // Planning avec recettes
+        status: 'active',
+        is_customized: false,
         valid_from,
         valid_to,
-        family_size: options.familySize,
-        is_customized: false,
-        generated_options: options
+        family_size,
+        generated_options: {
+          generated_at: new Date().toISOString(),
+          excluded_ingredients: excludedIngredients,
+          dietary_restrictions: dietaryRestrictions,
+          meal_types: mealTypes
+        }
       };
       
+      console.log('Création du menu dans la base de données...');
       const newMenu = await menusDataMapper.createWeeklyMenu(req.user.id, menuData);
-      res.status(201).json({
+      
+      console.log('Menu créé avec succès:', newMenu.id);
+      
+      return res.status(201).json({
         status: 'success',
         data: newMenu
       });
     } catch (error) {
+      console.error('Erreur dans generateWeeklyMenu:', error);
+      // Assurez-vous que l'erreur a un statut
+      error.status = error.status || 500;
       next(error);
     }
   },
@@ -142,11 +193,17 @@ const menusController = {
       if (error) {
         throw new ApiError(400, error.message);
       }
+      
       const updatedMenu = await menusDataMapper.updateWeeklyMenu(req.params.id, req.user.id, value);
+      
       if (!updatedMenu) {
         throw new ApiError(404, 'Weekly menu not found');
       }
-      res.json(updatedMenu);
+      
+      return res.status(200).json({
+        status: 'success',
+        data: updatedMenu
+      });
     } catch (error) {
       next(error);
     }
@@ -155,10 +212,12 @@ const menusController = {
   async deleteWeeklyMenu(req, res, next) {
     try {
       const deletedMenu = await menusDataMapper.deleteWeeklyMenu(req.params.id, req.user.id);
+      
       if (!deletedMenu) {
         throw new ApiError(404, 'Weekly menu not found');
       }
-      res.status(204).end();
+      
+      return res.status(204).end();
     } catch (error) {
       next(error);
     }
@@ -173,7 +232,7 @@ const menusController = {
  * @returns {Object} Planning des repas
  */
 function generateMealSchedule(eligibleRecipes, favoriteRecipes, options) {
-  const { numberOfMeals, numberOfDays, includeFavorites, mealTypes } = options;
+  const { numberOfMeals, numberOfDays = 7, includeFavorites, mealTypes } = options;
   
   // Organiser les recettes par type de repas
   const recipesByType = mealTypes.reduce((acc, type) => {
@@ -221,9 +280,9 @@ function generateMealSchedule(eligibleRecipes, favoriteRecipes, options) {
           is_favorite: useFavorite,
           image_url: selectedRecipe.image_url,
           prep_time: selectedRecipe.prep_time,
-          cooking_time: selectedRecipe.cooking_time,
+          cook_time: selectedRecipe.cook_time,
           difficulty_level: selectedRecipe.difficulty_level,
-          serves: options.familySize
+          servings: options.familySize || 1
         };
         
         // Retirer la recette des listes pour éviter les répétitions
@@ -233,7 +292,7 @@ function generateMealSchedule(eligibleRecipes, favoriteRecipes, options) {
         recipesByType[mealType] = recipesByType[mealType].filter(r => r.id !== selectedRecipe.id);
         
         // Si on n'a plus de recettes de ce type, réinitialiser la liste
-        if (recipesByType[mealType].length === 0) {
+        if (recipesByType[mealType].length === 0 || recipesByType[mealType].length < 3) {
           recipesByType[mealType] = eligibleRecipes.filter(recipe => recipe.meal_type === mealType);
         }
       } else {
