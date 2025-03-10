@@ -6,6 +6,7 @@ import validate from '../../validations/validator.js';
 import authMiddleware from '../../middlewares/auth.middleware.js';
 import { detectAccessLevel, checkRecipeAccess } from '../../middlewares/subscription.middleware.js';
 import cacheService from '../../services/cache.service.js'; 
+import checkRole from '../../middlewares/role.middleware.js';
 
 const router = express.Router();
 
@@ -81,6 +82,13 @@ router.get('/recipes/:id/ingredients', detectAccessLevel, checkRecipeAccess, cw(
 // Routes protégées (nécessitent une authentification)
 router.use(authMiddleware);
 
+// Routes d'administration des recettes (admin uniquement)
+router.get('/admin/recipes', checkRole('admin'), cw(recipeController.getAllRecipesAdmin));
+router.get('/admin/recipes/:id', checkRole('admin'), cw(recipeController.getOneRecipeAdmin));
+router.post('/admin/recipes', checkRole('admin'), validate(recipeSchema), clearCache('recipes_list'), cw(recipeController.createRecipeAdmin));
+router.put('/admin/recipes/:id', checkRole('admin'), validate(recipeSchema), clearRecipeCache, cw(recipeController.updateRecipeAdmin));
+router.delete('/admin/recipes/:id', checkRole('admin'), clearRecipeCache, cw(recipeController.deleteRecipeAdmin));
+router.post('/admin/recipes/bulk', checkRole('admin'), cw(recipeController.bulkActionAdmin));
 // Route pour les suggestions - après le middleware d'authentification
 router.get('/recipes/suggestions', detectAccessLevel, cw(recipeController.getSuggestions));
 

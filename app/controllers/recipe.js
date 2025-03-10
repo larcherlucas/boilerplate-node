@@ -624,6 +624,296 @@ const recipeController = {
       throw err;
     }
   },
+
+/**
+ * Version administrative de getAllRecipes
+ * Récupère toutes les recettes avec pagination et filtrage, sans restriction d'accès
+ */
+getAllRecipesAdmin: async (req, res) => {
+  try {
+    // Récupérer les paramètres de pagination et filtrage
+    const { 
+      page = 1, 
+      limit = 20, 
+      status, 
+      meal_type, 
+      difficulty_level, 
+      is_premium,
+      sort_by = 'updated_at',
+      sort_direction = 'desc',
+      search
+    } = req.query;
+    
+    // Construire l'objet filtres
+    const filters = { 
+      status, 
+      meal_type, 
+      difficulty_level,
+      is_premium: is_premium === 'true' ? true : is_premium === 'false' ? false : undefined,
+      search
+    };
+    
+    // Nettoyer les filtres null ou undefined
+    Object.keys(filters).forEach(key => {
+      if (filters[key] === null || filters[key] === undefined) {
+        delete filters[key];
+      }
+    });
+    
+    console.log('Filtres administrateur:', filters);
+    
+    // Pagination
+    const pagination = {
+      limit: parseInt(limit, 10),
+      offset: (parseInt(page, 10) - 1) * parseInt(limit, 10)
+    };
+    
+    // Tri
+    const sort = {
+      field: sort_by,
+      direction: sort_direction.toUpperCase()
+    };
+    
+    // Récupérer les recettes (en tant qu'admin, pas de restriction d'accès)
+    const recipes = await recipeDataMapper.findAllRecipes(filters, pagination, sort);
+    
+    // Compter le nombre total pour la pagination
+    const total = await recipeDataMapper.countRecipes(filters);
+    
+    return res.status(200).json({
+      status: 'success',
+      data: {
+        recipes,
+        pagination: {
+          page: parseInt(page, 10),
+          limit: parseInt(limit, 10),
+          total
+        }
+      }
+    });
+  } catch (err) {
+    console.error('Erreur dans getAllRecipesAdmin:', err);
+    throw err;
+  }
+},
+
+/**
+ * Version administrative de getOneRecipe
+ * Récupère les détails complets d'une recette, sans restriction d'accès
+ */
+getOneRecipeAdmin: async (req, res) => {
+  try {
+    const recipeId = parseInt(req.params.id, 10);
+    
+    if (isNaN(recipeId)) {
+      throw new ApiError(400, 'ID de recette invalide');
+    }
+    
+    // Récupérer la recette complète
+    const recipe = await recipeDataMapper.findOneRecipe(recipeId);
+    
+    if (!recipe) {
+      throw new ApiError(404, 'Recette non trouvée');
+    }
+    
+    // Formater la réponse avec les ingrédients et étapes
+    const responseData = {
+      ...recipe,
+      ingredients: formatIngredients(recipe.ingredients),
+      steps: formatSteps(recipe.steps || recipe.instructions)
+    };
+    
+    return res.status(200).json({
+      status: 'success',
+      data: responseData
+    });
+  } catch (err) {
+    console.error(`Erreur dans getOneRecipeAdmin pour la recette #${req.params.id}:`, err);
+    throw err;
+  }
+},
+
+/**
+ * Créer une recette (version admin)
+ */
+createRecipeAdmin: async (req, res) => {
+  try {
+    // L'administrateur peut créer des recettes pour n'importe quel auteur
+    const authorId = req.body.author_id || req.user.id;
+    
+    // Vérifier les données obligatoires
+    const requiredFields = ['title', 'meal_type', 'difficulty_level'];
+    for (const field of requiredFields) {
+      if (!req.body[field]) {
+        throw new ApiError(400, `Le champ "${field}" est obligatoire`);
+      }
+    }
+    
+    // Préparer les données
+    const recipeData = { 
+      ...req.body, 
+      author_id: authorId,
+      // Donner des valeurs par défaut si nécessaire
+      status: req.body.status || 'draft',
+      is_premium: req.body.is_premium !== undefined ? req.body.is_premium : false,
+      // Formater correctement les données
+      ingredients: typeof req.body.ingredients === 'string' 
+        ? JSON.parse(req.body.ingredients) 
+        : (req.body.ingredients || []),
+      steps: typeof req.body.steps === 'string'
+        ? JSON.parse(req.body.steps)
+        : (req.body.steps || [])
+    };
+    
+    const newRecipe = await recipeDataMapper.createRecipe(recipeData);
+    
+    // Invalider les caches pertinents
+    cacheService.invalidateByPrefix('recipes_list');
+    
+    return res.status(201).json({
+      status: 'success',
+      data: newRecipe,
+      message: 'Recette créée avec succès'
+    });
+  } catch (err) {
+    console.error('Erreur dans createRecipeAdmin:', err);
+    throw err;
+  }
+},
+
+/**
+ * Mettre à jour une recette (version admin)
+ */
+updateRecipeAdmin: async (req, res) => {
+  try {
+    const recipeId = parseInt(req.params.id, 10);
+    
+    if (isNaN(recipeId)) {
+      throw new ApiError(400, 'ID de recette invalide');
+    }
+    
+    // Vérifier que la recette existe
+    const recipe = await recipeDataMapper.findOneRecipe(recipeId);
+    if (!recipe) {
+      throw new ApiError(404, 'Recette non trouvée');
+    }
+    
+    // Formater les données JSON si nécessaire
+    const updateData = { ...req.body };
+    if (updateData.ingredients && typeof updateData.ingredients === 'string') {
+      updateData.ingredients = JSON.parse(updateData.ingredients);
+    }
+    if (updateData.steps && typeof updateData.steps === 'string') {
+      updateData.steps = JSON.parse(updateData.steps);
+    }
+    
+    const updatedRecipe = await recipeDataMapper.updateRecipe(recipeId, updateData);
+    
+    // Invalider le cache pour cette recette
+    cacheService.del(`recipe_${recipeId}_admin`);
+    cacheService.del(`recipe_${recipeId}_premium`);
+    cacheService.del(`recipe_${recipeId}_basic`);
+    cacheService.del(`recipe_${recipeId}_none`);
+    
+    // Invalider également les listes
+    cacheService.invalidateByPrefix('recipes_list');
+    
+    return res.status(200).json({
+      status: 'success',
+      data: updatedRecipe,
+      message: 'Recette mise à jour avec succès'
+    });
+  } catch (err) {
+    console.error(`Erreur dans updateRecipeAdmin pour la recette #${req.params.id}:`, err);
+    throw err;
+  }
+},
+
+/**
+ * Supprimer une recette (version admin)
+ */
+deleteRecipeAdmin: async (req, res) => {
+  try {
+    const recipeId = parseInt(req.params.id, 10);
+    
+    if (isNaN(recipeId)) {
+      throw new ApiError(400, 'ID de recette invalide');
+    }
+    
+    // Vérifier que la recette existe
+    const recipe = await recipeDataMapper.findOneRecipe(recipeId);
+    if (!recipe) {
+      throw new ApiError(404, 'Recette non trouvée');
+    }
+    
+    // L'administrateur peut supprimer n'importe quelle recette
+    await recipeDataMapper.deleteRecipe(recipeId);
+    
+    // Invalider tous les caches relatifs à cette recette
+    cacheService.del(`recipe_${recipeId}_admin`);
+    cacheService.del(`recipe_${recipeId}_premium`);
+    cacheService.del(`recipe_${recipeId}_basic`);
+    cacheService.del(`recipe_${recipeId}_none`);
+    
+    // Invalider également les listes
+    cacheService.invalidateByPrefix('recipes_list');
+    
+    return res.status(204).end();
+  } catch (err) {
+    console.error(`Erreur dans deleteRecipeAdmin pour la recette #${req.params.id}:`, err);
+    throw err;
+  }
+},
+
+/**
+ * Actions en lot sur les recettes (version admin)
+ */
+bulkActionAdmin: async (req, res) => {
+  try {
+    const { action, recipeIds } = req.body;
+    
+    if (!action || !recipeIds || !Array.isArray(recipeIds) || recipeIds.length === 0) {
+      throw new ApiError(400, 'Action et liste d\'IDs de recettes requises');
+    }
+    
+    let result;
+    
+    switch (action) {
+      case 'publish':
+        result = await recipeDataMapper.bulkUpdateStatus(recipeIds, 'published');
+        break;
+      case 'archive':
+        result = await recipeDataMapper.bulkUpdateStatus(recipeIds, 'archived');
+        break;
+      case 'makePremium':
+        result = await recipeDataMapper.bulkUpdatePremium(recipeIds, true);
+        break;
+      case 'makeStandard':
+        result = await recipeDataMapper.bulkUpdatePremium(recipeIds, false);
+        break;
+      case 'delete':
+        result = await recipeDataMapper.bulkDelete(recipeIds);
+        break;
+      default:
+        throw new ApiError(400, `Action non reconnue: ${action}`);
+    }
+    
+    // Invalider tous les caches concernés
+    cacheService.invalidateByPrefix('recipes_list');
+    for (const id of recipeIds) {
+      cacheService.invalidateByPrefix(`recipe_${id}`);
+    }
+    
+    return res.status(200).json({
+      status: 'success',
+      message: `Action "${action}" effectuée sur ${result.affected || result.length || 0} recette(s)`,
+      data: result
+    });
+  } catch (err) {
+    console.error(`Erreur dans bulkActionAdmin:`, err);
+    throw err;
+  }
+},
   
   getSuggestions: async (req, res) => {
     try {

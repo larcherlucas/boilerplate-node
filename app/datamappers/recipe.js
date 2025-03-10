@@ -355,6 +355,116 @@ async findAccessibleRecipes(userType = 'none', filters = {}, pagination = {}) {
     throw new DbError(error.message);
   }
 },
+
+// Récupérer toutes les recettes avec filtres et pagination (admin)
+findAllRecipes: async (filters = {}, pagination = {}, sort = {}) => {
+  try {
+    // Construire la requête SQL avec filtres
+    let query = db('recipes')
+      .select('*');
+      
+    // Appliquer les filtres
+    if (filters.status) query = query.where('status', filters.status);
+    if (filters.meal_type) query = query.where('meal_type', filters.meal_type);
+    if (filters.difficulty_level) query = query.where('difficulty_level', filters.difficulty_level);
+    if (filters.is_premium !== undefined) query = query.where('is_premium', filters.is_premium);
+    
+    // Recherche par titre ou description
+    if (filters.search) {
+      query = query.where(function() {
+        this.where('title', 'ilike', `%${filters.search}%`)
+            .orWhere('description', 'ilike', `%${filters.search}%`);
+      });
+    }
+    
+    // Appliquer le tri
+    const sortField = sort.field || 'updated_at';
+    const sortDirection = sort.direction || 'DESC';
+    query = query.orderBy(sortField, sortDirection);
+    
+    // Appliquer la pagination
+    if (pagination.limit) {
+      query = query.limit(pagination.limit);
+      if (pagination.offset) query = query.offset(pagination.offset);
+    }
+    
+    // Exécuter la requête
+    return await query;
+  } catch (err) {
+    console.error('Erreur dans findAllRecipes:', err);
+    throw err;
+  }
+},
+
+// Compter le nombre total de recettes avec filtres (pour pagination)
+countRecipes: async (filters = {}) => {
+  try {
+    let query = db('recipes')
+      .count('id as total');
+      
+    // Appliquer les filtres
+    if (filters.status) query = query.where('status', filters.status);
+    if (filters.meal_type) query = query.where('meal_type', filters.meal_type);
+    if (filters.difficulty_level) query = query.where('difficulty_level', filters.difficulty_level);
+    if (filters.is_premium !== undefined) query = query.where('is_premium', filters.is_premium);
+    
+    // Recherche par titre ou description
+    if (filters.search) {
+      query = query.where(function() {
+        this.where('title', 'ilike', `%${filters.search}%`)
+            .orWhere('description', 'ilike', `%${filters.search}%`);
+      });
+    }
+    
+    const result = await query.first();
+    return parseInt(result.total, 10);
+  } catch (err) {
+    console.error('Erreur dans countRecipes:', err);
+    throw err;
+  }
+},
+
+// Mise à jour en lot du statut des recettes
+bulkUpdateStatus: async (recipeIds, status) => {
+  try {
+    return await db('recipes')
+      .whereIn('id', recipeIds)
+      .update({ 
+        status,
+        updated_at: new Date()
+      });
+  } catch (err) {
+    console.error('Erreur dans bulkUpdateStatus:', err);
+    throw err;
+  }
+},
+
+// Mise à jour en lot du statut premium des recettes
+bulkUpdatePremium: async (recipeIds, isPremium) => {
+  try {
+    return await db('recipes')
+      .whereIn('id', recipeIds)
+      .update({ 
+        is_premium: isPremium,
+        updated_at: new Date()
+      });
+  } catch (err) {
+    console.error('Erreur dans bulkUpdatePremium:', err);
+    throw err;
+  }
+},
+
+// Suppression en lot de recettes
+bulkDelete: async (recipeIds) => {
+  try {
+    return await db('recipes')
+      .whereIn('id', recipeIds)
+      .delete();
+  } catch (err) {
+    console.error('Erreur dans bulkDelete:', err);
+    throw err;
+  }
+},
   async getSuggestions(userId, preferences = {}) {
     try {
       // Récupération des restrictions alimentaires de l'utilisateur
