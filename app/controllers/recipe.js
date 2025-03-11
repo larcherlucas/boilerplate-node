@@ -682,14 +682,8 @@ getAllRecipesAdmin: async (req, res) => {
     
     return res.status(200).json({
       status: 'success',
-      data: {
-        recipes,
-        pagination: {
-          page: parseInt(page, 10),
-          limit: parseInt(limit, 10),
-          total
-        }
-      }
+      data: recipes,  // La liste des recettes
+      totalCount: total  // Le nombre total de recettes
     });
   } catch (err) {
     console.error('Erreur dans getAllRecipesAdmin:', err);

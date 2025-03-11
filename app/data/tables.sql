@@ -109,6 +109,8 @@ CREATE TABLE recipes (
     CONSTRAINT valid_ingredients_json CHECK (jsonb_typeof(ingredients) = 'object'),
     CONSTRAINT valid_steps_json CHECK (jsonb_typeof(steps) = 'object')
 );
+-- ajout de la colonne status pour les recettes
+ALTER TABLE recipes ADD COLUMN status VARCHAR(50) DEFAULT 'published';
 
 COMMENT ON TABLE recipes IS 'Catalogue de recettes avec ingrédients, étapes et informations nutritionnelles';
 COMMENT ON COLUMN recipes.ingredients IS 'Liste structurée des ingrédients au format JSON';

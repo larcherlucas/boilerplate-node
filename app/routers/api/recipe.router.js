@@ -86,7 +86,7 @@ router.use(authMiddleware);
 router.get('/admin/recipes', checkRole('admin'), cw(recipeController.getAllRecipesAdmin));
 router.get('/admin/recipes/:id', checkRole('admin'), cw(recipeController.getOneRecipeAdmin));
 router.post('/admin/recipes', checkRole('admin'), validate(recipeSchema), clearCache('recipes_list'), cw(recipeController.createRecipeAdmin));
-router.put('/admin/recipes/:id', checkRole('admin'), validate(recipeSchema), clearRecipeCache, cw(recipeController.updateRecipeAdmin));
+router.patch('/admin/recipes/:id', checkRole('admin'), validate(recipeSchema), clearRecipeCache, cw(recipeController.updateRecipeAdmin));
 router.delete('/admin/recipes/:id', checkRole('admin'), clearRecipeCache, cw(recipeController.deleteRecipeAdmin));
 router.post('/admin/recipes/bulk', checkRole('admin'), cw(recipeController.bulkActionAdmin));
 // Route pour les suggestions - après le middleware d'authentification

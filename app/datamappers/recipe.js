@@ -221,250 +221,309 @@ const recipeDataMapper = {
     }
   },
 
-async countAccessibleRecipes(userType = 'none', filters = {}) {
-  try {
-    // Construire une requête qui compte plutôt que de retourner les lignes complètes
-    let query, values = [];
-    
-    if (userType === 'none') {
-      // Pour les utilisateurs sans abonnement: compte le nombre de recettes non-premium + premium disponibles
-      query = `
-        SELECT 
-          (SELECT COUNT(*) FROM recipes WHERE is_premium = false) +
-          LEAST(
-            (SELECT COUNT(*) FROM recipes WHERE is_premium = true),
-            (SELECT quota_limit FROM access_quotas WHERE user_type = 'none' AND feature_name = 'recipes') -
-            (SELECT COUNT(*) FROM recipes WHERE is_premium = false)
-          ) AS total_count
-      `;
-    } else {
-      // Pour les utilisateurs avec abonnement: toutes les recettes avec filtres appliqués
-      query = `
-        SELECT COUNT(*) AS total_count
-        FROM recipes r
-        WHERE 1=1
-      `;
+  async countAccessibleRecipes(userType = 'none', filters = {}) {
+    try {
+      // Construire une requête qui compte plutôt que de retourner les lignes complètes
+      let query, values = [];
       
-      // Ajouter les filtres spécifiques si fournis
-      let paramIndex = 1;
-      if (filters.meal_type) {
-        query += ` AND r.meal_type = $${paramIndex++}`;
-        values.push(filters.meal_type);
-      }
-      if (filters.difficulty_level) {
-        query += ` AND r.difficulty_level = $${paramIndex++}`;
-        values.push(filters.difficulty_level);
-      }
-      if (filters.season) {
-        query += ` AND r.season = $${paramIndex++}`;
-        values.push(filters.season);
-      }
-    }
-    
-    const result = await pool.query(query, values);
-    return parseInt(result.rows[0].total_count, 10);
-  } catch (error) {
-    throw new DbError(error.message);
-  }
-},
-async findAccessibleRecipes(userType = 'none', filters = {}, pagination = {}) {
-  try {
-    // Récupérer le quota pour les utilisateurs non abonnés
-    let recipeLimit;
-    if (userType === 'none') {
-      const quotaResult = await pool.query(
-        'SELECT quota_limit FROM access_quotas WHERE user_type = $1 AND feature_name = $2',
-        ['none', 'recipes']
-      );
-      recipeLimit = quotaResult.rows[0]?.quota_limit || 50;
-    }
-    
-    // Construire la requête selon l'abonnement
-    let query, values = [];
-    
-    if (userType === 'none') {
-      // Pour les utilisateurs sans abonnement: recettes non-premium et premium jusqu'à la limite
-      query = `
-        WITH non_premium_recipes AS (
-          SELECT r.*, u.email as author_email,
-                 (SELECT COUNT(*) FROM favorites f WHERE f.recipe_id = r.id) as favorite_count,
-                 (SELECT AVG(rating) FROM recipe_reviews rr WHERE rr.recipe_id = r.id) as average_rating
+      if (userType === 'none') {
+        // Pour les utilisateurs sans abonnement: compte le nombre de recettes non-premium + premium disponibles
+        query = `
+          SELECT 
+            (SELECT COUNT(*) FROM recipes WHERE is_premium = false) +
+            LEAST(
+              (SELECT COUNT(*) FROM recipes WHERE is_premium = true),
+              (SELECT quota_limit FROM access_quotas WHERE user_type = 'none' AND feature_name = 'recipes') -
+              (SELECT COUNT(*) FROM recipes WHERE is_premium = false)
+            ) AS total_count
+        `;
+      } else {
+        // Pour les utilisateurs avec abonnement: toutes les recettes avec filtres appliqués
+        query = `
+          SELECT COUNT(*) AS total_count
           FROM recipes r
-          LEFT JOIN users u ON r.author_id = u.id
-          WHERE r.is_premium = false
-        ),
-        premium_recipes AS (
-          SELECT r.*, u.email as author_email,
-                 (SELECT COUNT(*) FROM favorites f WHERE f.recipe_id = r.id) as favorite_count,
-                 (SELECT AVG(rating) FROM recipe_reviews rr WHERE rr.recipe_id = r.id) as average_rating
-          FROM recipes r
-          LEFT JOIN users u ON r.author_id = u.id
-          WHERE r.is_premium = true
-          ORDER BY r.rating DESC NULLS LAST, r.created_at DESC
-          LIMIT GREATEST(0, $1 - (SELECT COUNT(*) FROM non_premium_recipes))
-        )
-        SELECT * FROM non_premium_recipes
-        UNION ALL
-        SELECT * FROM premium_recipes
-        ORDER BY created_at DESC
-      `;
-      values.push(recipeLimit);
-    } else {
-      // Pour les utilisateurs avec abonnement: toutes les recettes
-      query = `
-        SELECT r.*, u.email as author_email,
-               (SELECT COUNT(*) FROM favorites f WHERE f.recipe_id = r.id) as favorite_count,
-               (SELECT AVG(rating) FROM recipe_reviews rr WHERE rr.recipe_id = r.id) as average_rating
-        FROM recipes r
-        LEFT JOIN users u ON r.author_id = u.id
-        WHERE 1=1
-      `;
-      
-      // Ajouter les filtres spécifiques si fournis
-      let paramIndex = 1;
-      if (filters.meal_type) {
-        query += ` AND r.meal_type = $${paramIndex++}`;
-        values.push(filters.meal_type);
-      }
-      if (filters.difficulty_level) {
-        query += ` AND r.difficulty_level = $${paramIndex++}`;
-        values.push(filters.difficulty_level);
-      }
-      if (filters.season) {
-        query += ` AND r.season = $${paramIndex++}`;
-        values.push(filters.season);
-      }
-      
-      query += ` ORDER BY r.created_at DESC`;
-      
-      // Pagination
-      if (pagination.limit) {
-        query += ` LIMIT $${paramIndex++}`;
-        values.push(pagination.limit);
+          WHERE 1=1
+        `;
         
-        if (pagination.offset) {
-          query += ` OFFSET $${paramIndex++}`;
-          values.push(pagination.offset);
+        // Ajouter les filtres spécifiques si fournis
+        let paramIndex = 1;
+        if (filters.meal_type) {
+          query += ` AND r.meal_type = $${paramIndex++}`;
+          values.push(filters.meal_type);
+        }
+        if (filters.difficulty_level) {
+          query += ` AND r.difficulty_level = $${paramIndex++}`;
+          values.push(filters.difficulty_level);
+        }
+        if (filters.season) {
+          query += ` AND r.season = $${paramIndex++}`;
+          values.push(filters.season);
         }
       }
-    }
-    
-    const result = await pool.query(query, values);
-    return result.rows;
-  } catch (error) {
-    throw new DbError(error.message);
-  }
-},
-
-// Récupérer toutes les recettes avec filtres et pagination (admin)
-findAllRecipes: async (filters = {}, pagination = {}, sort = {}) => {
-  try {
-    // Construire la requête SQL avec filtres
-    let query = db('recipes')
-      .select('*');
       
-    // Appliquer les filtres
-    if (filters.status) query = query.where('status', filters.status);
-    if (filters.meal_type) query = query.where('meal_type', filters.meal_type);
-    if (filters.difficulty_level) query = query.where('difficulty_level', filters.difficulty_level);
-    if (filters.is_premium !== undefined) query = query.where('is_premium', filters.is_premium);
-    
-    // Recherche par titre ou description
-    if (filters.search) {
-      query = query.where(function() {
-        this.where('title', 'ilike', `%${filters.search}%`)
-            .orWhere('description', 'ilike', `%${filters.search}%`);
-      });
+      const result = await pool.query(query, values);
+      return parseInt(result.rows[0].total_count, 10);
+    } catch (error) {
+      throw new DbError(error.message);
     }
-    
-    // Appliquer le tri
-    const sortField = sort.field || 'updated_at';
-    const sortDirection = sort.direction || 'DESC';
-    query = query.orderBy(sortField, sortDirection);
-    
-    // Appliquer la pagination
-    if (pagination.limit) {
-      query = query.limit(pagination.limit);
-      if (pagination.offset) query = query.offset(pagination.offset);
-    }
-    
-    // Exécuter la requête
-    return await query;
-  } catch (err) {
-    console.error('Erreur dans findAllRecipes:', err);
-    throw err;
-  }
-},
+  },
 
-// Compter le nombre total de recettes avec filtres (pour pagination)
-countRecipes: async (filters = {}) => {
-  try {
-    let query = db('recipes')
-      .count('id as total');
+  async findAccessibleRecipes(userType = 'none', filters = {}, pagination = {}) {
+    try {
+      // Récupérer le quota pour les utilisateurs non abonnés
+      let recipeLimit;
+      if (userType === 'none') {
+        const quotaResult = await pool.query(
+          'SELECT quota_limit FROM access_quotas WHERE user_type = $1 AND feature_name = $2',
+          ['none', 'recipes']
+        );
+        recipeLimit = quotaResult.rows[0]?.quota_limit || 50;
+      }
       
-    // Appliquer les filtres
-    if (filters.status) query = query.where('status', filters.status);
-    if (filters.meal_type) query = query.where('meal_type', filters.meal_type);
-    if (filters.difficulty_level) query = query.where('difficulty_level', filters.difficulty_level);
-    if (filters.is_premium !== undefined) query = query.where('is_premium', filters.is_premium);
-    
-    // Recherche par titre ou description
-    if (filters.search) {
-      query = query.where(function() {
-        this.where('title', 'ilike', `%${filters.search}%`)
-            .orWhere('description', 'ilike', `%${filters.search}%`);
-      });
+      // Construire la requête selon l'abonnement
+      let query, values = [];
+      
+      if (userType === 'none') {
+        // Pour les utilisateurs sans abonnement: recettes non-premium et premium jusqu'à la limite
+        query = `
+          WITH non_premium_recipes AS (
+            SELECT r.*, u.email as author_email,
+                   (SELECT COUNT(*) FROM favorites f WHERE f.recipe_id = r.id) as favorite_count,
+                   (SELECT AVG(rating) FROM recipe_reviews rr WHERE rr.recipe_id = r.id) as average_rating
+            FROM recipes r
+            LEFT JOIN users u ON r.author_id = u.id
+            WHERE r.is_premium = false
+          ),
+          premium_recipes AS (
+            SELECT r.*, u.email as author_email,
+                   (SELECT COUNT(*) FROM favorites f WHERE f.recipe_id = r.id) as favorite_count,
+                   (SELECT AVG(rating) FROM recipe_reviews rr WHERE rr.recipe_id = r.id) as average_rating
+            FROM recipes r
+            LEFT JOIN users u ON r.author_id = u.id
+            WHERE r.is_premium = true
+            ORDER BY r.rating DESC NULLS LAST, r.created_at DESC
+            LIMIT GREATEST(0, $1 - (SELECT COUNT(*) FROM non_premium_recipes))
+          )
+          SELECT * FROM non_premium_recipes
+          UNION ALL
+          SELECT * FROM premium_recipes
+          ORDER BY created_at DESC
+        `;
+        values.push(recipeLimit);
+      } else {
+        // Pour les utilisateurs avec abonnement: toutes les recettes
+        query = `
+          SELECT r.*, u.email as author_email,
+                 (SELECT COUNT(*) FROM favorites f WHERE f.recipe_id = r.id) as favorite_count,
+                 (SELECT AVG(rating) FROM recipe_reviews rr WHERE rr.recipe_id = r.id) as average_rating
+          FROM recipes r
+          LEFT JOIN users u ON r.author_id = u.id
+          WHERE 1=1
+        `;
+        
+        // Ajouter les filtres spécifiques si fournis
+        let paramIndex = 1;
+        if (filters.meal_type) {
+          query += ` AND r.meal_type = $${paramIndex++}`;
+          values.push(filters.meal_type);
+        }
+        if (filters.difficulty_level) {
+          query += ` AND r.difficulty_level = $${paramIndex++}`;
+          values.push(filters.difficulty_level);
+        }
+        if (filters.season) {
+          query += ` AND r.season = $${paramIndex++}`;
+          values.push(filters.season);
+        }
+        
+        query += ` ORDER BY r.created_at DESC`;
+        
+        // Pagination
+        if (pagination.limit) {
+          query += ` LIMIT $${paramIndex++}`;
+          values.push(pagination.limit);
+          
+          if (pagination.offset) {
+            query += ` OFFSET $${paramIndex++}`;
+            values.push(pagination.offset);
+          }
+        }
+      }
+      
+      const result = await pool.query(query, values);
+      return result.rows;
+    } catch (error) {
+      throw new DbError(error.message);
     }
-    
-    const result = await query.first();
-    return parseInt(result.total, 10);
-  } catch (err) {
-    console.error('Erreur dans countRecipes:', err);
-    throw err;
-  }
-},
+  },
 
-// Mise à jour en lot du statut des recettes
-bulkUpdateStatus: async (recipeIds, status) => {
-  try {
-    return await db('recipes')
-      .whereIn('id', recipeIds)
-      .update({ 
-        status,
-        updated_at: new Date()
-      });
-  } catch (err) {
-    console.error('Erreur dans bulkUpdateStatus:', err);
-    throw err;
-  }
-},
+  // Récupérer toutes les recettes avec filtres et pagination (admin)
+  findAllRecipes: async (filters = {}, pagination = {}, sort = {}) => {
+    try {
+      // Construire la requête SQL avec filtres
+      let query = `
+        SELECT * FROM recipes 
+        WHERE 1=1
+      `;
+      const values = [];
+      let paramIndex = 1;
+      
+      // Appliquer les filtres
+      if (filters.status) {
+        query += ` AND status = $${paramIndex}`;
+        values.push(filters.status);
+        paramIndex++;
+      }
+      if (filters.meal_type) {
+        query += ` AND meal_type = $${paramIndex}`;
+        values.push(filters.meal_type);
+        paramIndex++;
+      }
+      if (filters.difficulty_level) {
+        query += ` AND difficulty_level = $${paramIndex}`;
+        values.push(filters.difficulty_level);
+        paramIndex++;
+      }
+      if (filters.is_premium !== undefined) {
+        query += ` AND is_premium = $${paramIndex}`;
+        values.push(filters.is_premium);
+        paramIndex++;
+      }
+      
+      // Recherche par titre ou description
+      if (filters.search) {
+        query += ` AND (title ILIKE $${paramIndex} OR description ILIKE $${paramIndex+1})`;
+        const searchPattern = `%${filters.search}%`;
+        values.push(searchPattern, searchPattern);
+        paramIndex += 2;
+      }
+      
+      // Appliquer le tri
+      const sortField = sort.field || 'updated_at';
+      const sortDirection = sort.direction || 'DESC';
+      query += ` ORDER BY ${sortField} ${sortDirection}`;
+      
+      // Appliquer la pagination
+      if (pagination.limit) {
+        query += ` LIMIT $${paramIndex}`;
+        values.push(pagination.limit);
+        paramIndex++;
+        
+        if (pagination.offset) {
+          query += ` OFFSET $${paramIndex}`;
+          values.push(pagination.offset);
+          paramIndex++;
+        }
+      }
+      
+      // Exécuter la requête
+      const result = await pool.query(query, values);
+      return result.rows;
+    } catch (err) {
+      console.error('Erreur dans findAllRecipes:', err);
+      throw err;
+    }
+  },
 
-// Mise à jour en lot du statut premium des recettes
-bulkUpdatePremium: async (recipeIds, isPremium) => {
-  try {
-    return await db('recipes')
-      .whereIn('id', recipeIds)
-      .update({ 
-        is_premium: isPremium,
-        updated_at: new Date()
-      });
-  } catch (err) {
-    console.error('Erreur dans bulkUpdatePremium:', err);
-    throw err;
-  }
-},
+  // Compter le nombre total de recettes avec filtres (pour pagination)
+  countRecipes: async (filters = {}) => {
+    try {
+      let query = `
+        SELECT COUNT(id) as total 
+        FROM recipes 
+        WHERE 1=1
+      `;
+      const values = [];
+      let paramIndex = 1;
+      
+      // Appliquer les filtres
+      if (filters.status) {
+        query += ` AND status = $${paramIndex}`;
+        values.push(filters.status);
+        paramIndex++;
+      }
+      if (filters.meal_type) {
+        query += ` AND meal_type = $${paramIndex}`;
+        values.push(filters.meal_type);
+        paramIndex++;
+      }
+      if (filters.difficulty_level) {
+        query += ` AND difficulty_level = $${paramIndex}`;
+        values.push(filters.difficulty_level);
+        paramIndex++;
+      }
+      if (filters.is_premium !== undefined) {
+        query += ` AND is_premium = $${paramIndex}`;
+        values.push(filters.is_premium);
+        paramIndex++;
+      }
+      
+      // Recherche par titre ou description
+      if (filters.search) {
+        query += ` AND (title ILIKE $${paramIndex} OR description ILIKE $${paramIndex+1})`;
+        const searchPattern = `%${filters.search}%`;
+        values.push(searchPattern, searchPattern);
+        paramIndex += 2;
+      }
+      
+      const result = await pool.query(query, values);
+      return parseInt(result.rows[0].total, 10);
+    } catch (err) {
+      console.error('Erreur dans countRecipes:', err);
+      throw err;
+    }
+  },
 
-// Suppression en lot de recettes
-bulkDelete: async (recipeIds) => {
-  try {
-    return await db('recipes')
-      .whereIn('id', recipeIds)
-      .delete();
-  } catch (err) {
-    console.error('Erreur dans bulkDelete:', err);
-    throw err;
-  }
-},
+  // Mise à jour en lot du statut des recettes
+  bulkUpdateStatus: async (recipeIds, status) => {
+    try {
+      const query = `
+        UPDATE recipes 
+        SET status = $1, updated_at = $2
+        WHERE id = ANY($3::int[])
+        RETURNING id
+      `;
+      const result = await pool.query(query, [status, new Date(), recipeIds]);
+      return result.rowCount;
+    } catch (err) {
+      console.error('Erreur dans bulkUpdateStatus:', err);
+      throw err;
+    }
+  },
+
+  // Mise à jour en lot du statut premium des recettes
+  bulkUpdatePremium: async (recipeIds, isPremium) => {
+    try {
+      const query = `
+        UPDATE recipes 
+        SET is_premium = $1, updated_at = $2
+        WHERE id = ANY($3::int[])
+        RETURNING id
+      `;
+      const result = await pool.query(query, [isPremium, new Date(), recipeIds]);
+      return result.rowCount;
+    } catch (err) {
+      console.error('Erreur dans bulkUpdatePremium:', err);
+      throw err;
+    }
+  },
+
+  // Suppression en lot de recettes
+  bulkDelete: async (recipeIds) => {
+    try {
+      const query = `
+        DELETE FROM recipes
+        WHERE id = ANY($1::int[])
+        RETURNING id
+      `;
+      const result = await pool.query(query, [recipeIds]);
+      return result.rowCount;
+    } catch (err) {
+      console.error('Erreur dans bulkDelete:', err);
+      throw err;
+    }
+  },
+
   async getSuggestions(userId, preferences = {}) {
     try {
       // Récupération des restrictions alimentaires de l'utilisateur
