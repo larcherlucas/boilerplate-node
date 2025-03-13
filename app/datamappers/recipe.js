@@ -523,7 +523,25 @@ const recipeDataMapper = {
       throw err;
     }
   },
-
+  findRecentRecipes: async (limit = 5) => {
+    try {
+      const query = {
+        text: `
+          SELECT id, title, status, meal_type, created_at, updated_at
+          FROM recipes
+          ORDER BY updated_at DESC
+          LIMIT $1
+        `,
+        values: [limit]
+      };
+      
+      const result = await pool.query(query);
+      return result.rows;
+    } catch (error) {
+      console.error('Erreur lors de la récupération des recettes récentes:', error);
+      throw new DbError(error);
+    }
+  },
   async getSuggestions(userId, preferences = {}) {
     try {
       // Récupération des restrictions alimentaires de l'utilisateur

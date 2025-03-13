@@ -1,3 +1,4 @@
+// src/services/cache.service.js
 import NodeCache from 'node-cache';
 import logger from '../utils/logger.js';
 
@@ -13,6 +14,9 @@ class CacheService {
       checkperiod: 60, // Vérification des expirations toutes les 60 secondes
       useClones: false // Pour les performances, ne pas cloner les objets stockés
     });
+    
+    // Conservation des options précédentes pour le toggle du cache
+    this.previousOptions = null;
     
     // Statistiques du cache
     this.stats = {
@@ -94,6 +98,17 @@ class CacheService {
    * @returns {Promise<any>} - Données du cache ou nouvellement chargées
    */
   async getCachedData(key, fetchFunction, ttl) {
+    // Si le cache est désactivé (previousOptions est défini), 
+    // appeler directement la fonction de chargement
+    if (this.previousOptions) {
+      try {
+        return await fetchFunction();
+      } catch (error) {
+        logger.error(`Erreur lors du chargement des données pour la clé ${key}:`, error);
+        throw error;
+      }
+    }
+    
     const cachedData = this.get(key);
     
     if (cachedData !== undefined) {
@@ -130,6 +145,15 @@ class CacheService {
     
     logger.info(`Cache: ${count} clés invalidées avec le préfixe ${prefix}`);
     return count;
+  }
+  
+  /**
+   * Réinitialiser les statistiques du cache
+   */
+  resetStats() {
+    this.stats.hits = 0;
+    this.stats.misses = 0;
+    logger.info('Statistiques du cache réinitialisées');
   }
 }
 

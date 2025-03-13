@@ -43,6 +43,7 @@ const generateToken = (user) => {
     userId: user.id,
     username: user.username || null,
     email: user.email,
+    role: user.role 
   };
 
   const options = {

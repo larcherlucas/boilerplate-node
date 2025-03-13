@@ -83,12 +83,17 @@ router.get('/recipes/:id/ingredients', detectAccessLevel, checkRecipeAccess, cw(
 router.use(authMiddleware);
 
 // Routes d'administration des recettes (admin uniquement)
+// Les routes avec des noms spécifiques AVANT les routes avec des paramètres
+router.get('/admin/dashboard/stats', checkRole('admin'), cw(recipeController.getDashboardStats));
+router.get('/admin/recipes/recent', checkRole('admin'), cw(recipeController.getRecentRecipesAdmin));
+router.post('/admin/recipes/bulk', checkRole('admin'), cw(recipeController.bulkActionAdmin));
+
+// ENSUITE les routes avec paramètres
 router.get('/admin/recipes', checkRole('admin'), cw(recipeController.getAllRecipesAdmin));
 router.get('/admin/recipes/:id', checkRole('admin'), cw(recipeController.getOneRecipeAdmin));
 router.post('/admin/recipes', checkRole('admin'), validate(recipeSchema), clearCache('recipes_list'), cw(recipeController.createRecipeAdmin));
 router.patch('/admin/recipes/:id', checkRole('admin'), validate(recipeSchema), clearRecipeCache, cw(recipeController.updateRecipeAdmin));
 router.delete('/admin/recipes/:id', checkRole('admin'), clearRecipeCache, cw(recipeController.deleteRecipeAdmin));
-router.post('/admin/recipes/bulk', checkRole('admin'), cw(recipeController.bulkActionAdmin));
 // Route pour les suggestions - après le middleware d'authentification
 router.get('/recipes/suggestions', detectAccessLevel, cw(recipeController.getSuggestions));
 

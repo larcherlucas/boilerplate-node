@@ -13,6 +13,7 @@ import recipeReviewsRouter from './recipeReviews.router.js';
 import paymentRouter from './payment.router.js';
 import subscriptionPlansRouter from './subscriptionPlans.router.js'; 
 import recipeExtractorRouter from './recipeExtractor.router.js';
+import cacheRouter from './cache.routes.js';
 
 
 const router = express.Router();
@@ -47,6 +48,7 @@ router.use(favoritesRouter);
 router.use(dietaryRestrictionsRouter);
 router.use('/payment', paymentRouter);
 router.use('/extract', recipeExtractorRouter);
+router.use('/admin/cache', cacheRouter);
 
 // Error handler (404)
 router.use((_, __, next) => {

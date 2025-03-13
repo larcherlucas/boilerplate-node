@@ -691,6 +691,90 @@ getAllRecipesAdmin: async (req, res) => {
   }
 },
 
+getDashboardStats: async (req, res) => {
+  try {
+    // Récupérer les statistiques nécessaires
+    const totalRecipes = await recipeDataMapper.countRecipes({});
+    
+    // Obtenir les données pour les tendances (recettes ajoutées le mois dernier vs le mois précédent)
+    const today = new Date();
+    const lastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+    const twoMonthsAgo = new Date(today.getFullYear(), today.getMonth() - 2, 1);
+    
+    const lastMonthRecipes = await recipeDataMapper.countRecipesByDate(twoMonthsAgo, lastMonth);
+    const currentMonthRecipes = await recipeDataMapper.countRecipesByDate(lastMonth, today);
+    
+    // Calculer le pourcentage de changement
+    let recipesTrend = 0;
+    if (lastMonthRecipes > 0) {
+      recipesTrend = ((currentMonthRecipes - lastMonthRecipes) / lastMonthRecipes) * 100;
+    }
+    
+    // Récupérer les statistiques du cache
+    const cacheStats = cacheService.getStats();
+    
+    return res.status(200).json({
+      status: 'success',
+      data: {
+        totalRecipes,
+        recipesTrend: parseFloat(recipesTrend.toFixed(1)),
+        activeUsers: 0, // À implémenter avec votre dataMapper utilisateur
+        usersTrend: 0,  // À implémenter
+        premiumUsers: 0, // À implémenter
+        premiumTrend: 0, // À implémenter
+        cacheRatio: Math.round(cacheStats.hitRatio * 100),
+        cacheHits: cacheStats.hits,
+        cacheMisses: cacheStats.misses
+      }
+    });
+  } catch (err) {
+    console.error('Erreur lors de la récupération des statistiques:', err);
+    throw err;
+  }
+},
+
+getRecentRecipes: async (req, res) => {
+  try {
+    const limit = req.query.limit ? parseInt(req.query.limit, 10) : 5;
+    
+    // Utiliser le datamapper pour récupérer les recettes récentes
+    const recipes = await recipeDataMapper.findRecentRecipes(limit);
+    
+    return res.status(200).json({
+      status: 'success',
+      data: recipes
+    });
+  } catch (err) {
+    console.error('Erreur lors de la récupération des recettes récentes:', err);
+    throw err;
+  }
+},
+
+/**
+ * Récupérer les recettes les plus récentes
+ * @param {Object} req - Requête Express
+ * @param {Object} res - Réponse Express
+ */
+getRecentRecipesAdmin: async (req, res) => {
+  try {
+    const limit = req.query.limit ? parseInt(req.query.limit, 10) : 5;
+    
+    if (isNaN(limit) || limit <= 0) {
+      throw new ApiError(400, 'Limite invalide');
+    }
+    
+    // Utiliser directement le datamapper existant
+    const recipes = await recipeDataMapper.findRecentRecipes(limit);
+    
+    return res.status(200).json({
+      status: 'success',
+      data: recipes
+    });
+  } catch (err) {
+    console.error('Erreur lors de la récupération des recettes récentes:', err);
+    throw err;
+  }
+}, 
 /**
  * Version administrative de getOneRecipe
  * Récupère les détails complets d'une recette, sans restriction d'accès
@@ -774,7 +858,40 @@ createRecipeAdmin: async (req, res) => {
     throw err;
   }
 },
-
+/**
+ * Récupérer les statistiques pour le tableau de bord admin
+ * @param {Object} req - Requête Express
+ * @param {Object} res - Réponse Express
+ */
+getDashboardStats: async (req, res) => {
+  try {
+    // Utiliser directement les datamappers existants
+    const recipeCount = await recipeDataMapper.countRecipes({});
+    
+    // Statistiques du cache
+    const cacheStats = cacheService.getStats();
+    
+    // Pour le moment, utiliser des valeurs fictives pour les statistiques d'utilisateurs
+    // Ces valeurs pourront être remplacées par de vraies requêtes plus tard
+    return res.status(200).json({
+      status: 'success',
+      data: {
+        totalRecipes: recipeCount,
+        recipesTrend: 5.2,
+        activeUsers: 42,
+        usersTrend: 12.8,
+        premiumUsers: 15,
+        premiumTrend: 7.5,
+        cacheRatio: Math.round((cacheStats.hits / (cacheStats.hits + cacheStats.misses || 1)) * 100),
+        cacheHits: cacheStats.hits,
+        cacheMisses: cacheStats.misses
+      }
+    });
+  } catch (err) {
+    console.error('Erreur lors de la récupération des statistiques du tableau de bord:', err);
+    throw err;
+  }
+},
 /**
  * Mettre à jour une recette (version admin)
  */
