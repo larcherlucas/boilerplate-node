@@ -228,13 +228,40 @@ const recipeDataMapper = {
       
       if (userType === 'none') {
         // Pour les utilisateurs sans abonnement: compte le nombre de recettes non-premium + premium disponibles
+        // Cette méthode doit être adaptée pour prendre en compte les filtres
+        const whereClause = [];
+        
+        if (filters.meal_type) {
+          whereClause.push(`meal_type = $${values.length + 1}`);
+          values.push(filters.meal_type);
+        }
+        if (filters.difficulty_level) {
+          whereClause.push(`difficulty_level = $${values.length + 1}`);
+          values.push(filters.difficulty_level);
+        }
+        if (filters.season) {
+          whereClause.push(`(season = $${values.length + 1} OR season = 'all')`);
+          values.push(filters.season);
+        }
+        // Ajout des nouveaux filtres
+        if (filters.category) {
+          whereClause.push(`category = $${values.length + 1}`);
+          values.push(filters.category);
+        }
+        if (filters.origin) {
+          whereClause.push(`origin = $${values.length + 1}`);
+          values.push(filters.origin);
+        }
+        
+        const filterCondition = whereClause.length ? 'AND ' + whereClause.join(' AND ') : '';
+        
         query = `
           SELECT 
-            (SELECT COUNT(*) FROM recipes WHERE is_premium = false) +
+            (SELECT COUNT(*) FROM recipes WHERE is_premium = false ${filterCondition}) +
             LEAST(
-              (SELECT COUNT(*) FROM recipes WHERE is_premium = true),
+              (SELECT COUNT(*) FROM recipes WHERE is_premium = true ${filterCondition}),
               (SELECT quota_limit FROM access_quotas WHERE user_type = 'none' AND feature_name = 'recipes') -
-              (SELECT COUNT(*) FROM recipes WHERE is_premium = false)
+              (SELECT COUNT(*) FROM recipes WHERE is_premium = false ${filterCondition})
             ) AS total_count
         `;
       } else {
@@ -256,8 +283,17 @@ const recipeDataMapper = {
           values.push(filters.difficulty_level);
         }
         if (filters.season) {
-          query += ` AND r.season = $${paramIndex++}`;
+          query += ` AND (r.season = $${paramIndex++} OR r.season = 'all')`;
           values.push(filters.season);
+        }
+        // Ajout des nouveaux filtres
+        if (filters.category) {
+          query += ` AND r.category = $${paramIndex++}`;
+          values.push(filters.category);
+        }
+        if (filters.origin) {
+          query += ` AND r.origin = $${paramIndex++}`;
+          values.push(filters.origin);
         }
       }
       
@@ -285,6 +321,44 @@ const recipeDataMapper = {
       
       if (userType === 'none') {
         // Pour les utilisateurs sans abonnement: recettes non-premium et premium jusqu'à la limite
+        // Nous devons modifier cette approche pour incorporer les filtres de catégorie et origine
+        // Note: Cette requête est simplifiée pour plus de clarté
+        
+        // Premièrement, construisons notre clause WHERE pour les filtres
+        let whereClause = "r.is_premium = false";
+        let whereClausePremium = "r.is_premium = true";
+        
+        // Paramètres pour les filtres
+        if (filters.meal_type) {
+          whereClause += ` AND r.meal_type = $1`;
+          whereClausePremium += ` AND r.meal_type = $1`;
+          values.push(filters.meal_type);
+        }
+        if (filters.difficulty_level) {
+          whereClause += ` AND r.difficulty_level = $${values.length + 1}`;
+          whereClausePremium += ` AND r.difficulty_level = $${values.length + 1}`;
+          values.push(filters.difficulty_level);
+        }
+        if (filters.season) {
+          whereClause += ` AND (r.season = $${values.length + 1} OR r.season = 'all')`;
+          whereClausePremium += ` AND (r.season = $${values.length + 1} OR r.season = 'all')`;
+          values.push(filters.season);
+        }
+        // Ajout des nouveaux filtres
+        if (filters.category) {
+          whereClause += ` AND r.category = $${values.length + 1}`;
+          whereClausePremium += ` AND r.category = $${values.length + 1}`;
+          values.push(filters.category);
+        }
+        if (filters.origin) {
+          whereClause += ` AND r.origin = $${values.length + 1}`;
+          whereClausePremium += ` AND r.origin = $${values.length + 1}`;
+          values.push(filters.origin);
+        }
+        
+        // Ajouter le paramètre pour la limite de recettes
+        values.push(recipeLimit);
+        
         query = `
           WITH non_premium_recipes AS (
             SELECT r.*, u.email as author_email,
@@ -292,7 +366,7 @@ const recipeDataMapper = {
                    (SELECT AVG(rating) FROM recipe_reviews rr WHERE rr.recipe_id = r.id) as average_rating
             FROM recipes r
             LEFT JOIN users u ON r.author_id = u.id
-            WHERE r.is_premium = false
+            WHERE ${whereClause}
           ),
           premium_recipes AS (
             SELECT r.*, u.email as author_email,
@@ -300,16 +374,15 @@ const recipeDataMapper = {
                    (SELECT AVG(rating) FROM recipe_reviews rr WHERE rr.recipe_id = r.id) as average_rating
             FROM recipes r
             LEFT JOIN users u ON r.author_id = u.id
-            WHERE r.is_premium = true
+            WHERE ${whereClausePremium}
             ORDER BY r.rating DESC NULLS LAST, r.created_at DESC
-            LIMIT GREATEST(0, $1 - (SELECT COUNT(*) FROM non_premium_recipes))
+            LIMIT GREATEST(0, $${values.length} - (SELECT COUNT(*) FROM non_premium_recipes))
           )
           SELECT * FROM non_premium_recipes
           UNION ALL
           SELECT * FROM premium_recipes
           ORDER BY created_at DESC
         `;
-        values.push(recipeLimit);
       } else {
         // Pour les utilisateurs avec abonnement: toutes les recettes
         query = `
@@ -332,8 +405,17 @@ const recipeDataMapper = {
           values.push(filters.difficulty_level);
         }
         if (filters.season) {
-          query += ` AND r.season = $${paramIndex++}`;
+          query += ` AND (r.season = $${paramIndex++} OR r.season = 'all')`;
           values.push(filters.season);
+        }
+        // Ajout des nouveaux filtres
+        if (filters.category) {
+          query += ` AND r.category = $${paramIndex++}`;
+          values.push(filters.category);
+        }
+        if (filters.origin) {
+          query += ` AND r.origin = $${paramIndex++}`;
+          values.push(filters.origin);
         }
         
         query += ` ORDER BY r.created_at DESC`;
@@ -358,70 +440,65 @@ const recipeDataMapper = {
   },
 
   // Récupérer toutes les recettes avec filtres et pagination (admin)
-  findAllRecipes: async (filters = {}, pagination = {}, sort = {}) => {
+  async findAllRecipes(filters = {}) {
     try {
-      // Construire la requête SQL avec filtres
       let query = `
-        SELECT * FROM recipes 
+        SELECT r.*, u.email as author_email,
+               (SELECT COUNT(*) FROM favorites f WHERE f.recipe_id = r.id) as favorite_count,
+               (SELECT AVG(rating) FROM recipe_reviews rr WHERE rr.recipe_id = r.id) as average_rating
+        FROM recipes r
+        LEFT JOIN users u ON r.author_id = u.id
         WHERE 1=1
       `;
       const values = [];
-      let paramIndex = 1;
-      
-      // Appliquer les filtres
-      if (filters.status) {
-        query += ` AND status = $${paramIndex}`;
-        values.push(filters.status);
-        paramIndex++;
-      }
+      let paramCount = 1;
+  
+      // Ajout dynamique des filtres
       if (filters.meal_type) {
-        query += ` AND meal_type = $${paramIndex}`;
+        query += ` AND meal_type = $${paramCount}`;
         values.push(filters.meal_type);
-        paramIndex++;
+        paramCount++;
       }
       if (filters.difficulty_level) {
-        query += ` AND difficulty_level = $${paramIndex}`;
+        query += ` AND difficulty_level = $${paramCount}`;
         values.push(filters.difficulty_level);
-        paramIndex++;
+        paramCount++;
+      }
+      if (filters.season) {
+        query += ` AND season = $${paramCount}`;
+        values.push(filters.season);
+        paramCount++;
       }
       if (filters.is_premium !== undefined) {
-        query += ` AND is_premium = $${paramIndex}`;
+        query += ` AND is_premium = $${paramCount}`;
         values.push(filters.is_premium);
-        paramIndex++;
+        paramCount++;
       }
-      
-      // Recherche par titre ou description
-      if (filters.search) {
-        query += ` AND (title ILIKE $${paramIndex} OR description ILIKE $${paramIndex+1})`;
-        const searchPattern = `%${filters.search}%`;
-        values.push(searchPattern, searchPattern);
-        paramIndex += 2;
+      // Ajout des nouveaux filtres pour catégorie et origine
+      if (filters.category) {
+        query += ` AND category = $${paramCount}`;
+        values.push(filters.category);
+        paramCount++;
       }
-      
-      // Appliquer le tri
-      const sortField = sort.field || 'updated_at';
-      const sortDirection = sort.direction || 'DESC';
-      query += ` ORDER BY ${sortField} ${sortDirection}`;
-      
-      // Appliquer la pagination
-      if (pagination.limit) {
-        query += ` LIMIT $${paramIndex}`;
-        values.push(pagination.limit);
-        paramIndex++;
-        
-        if (pagination.offset) {
-          query += ` OFFSET $${paramIndex}`;
-          values.push(pagination.offset);
-          paramIndex++;
-        }
+      if (filters.origin) {
+        query += ` AND origin = $${paramCount}`;
+        values.push(filters.origin);
+        paramCount++;
       }
+  
+      // Ordre par défaut: du plus récent au plus ancien
+      query += ' ORDER BY created_at DESC';
       
-      // Exécuter la requête
+      // Limiter aux 50 premiers résultats pour le type 'free'
+      if (filters.type === 'free') {
+        query += ' LIMIT 50';
+      }
+      // Pas de limite pour le type 'premium'
+  
       const result = await pool.query(query, values);
       return result.rows;
-    } catch (err) {
-      console.error('Erreur dans findAllRecipes:', err);
-      throw err;
+    } catch (error) {
+      throw new DbError(error.message);
     }
   },
 
@@ -473,7 +550,111 @@ const recipeDataMapper = {
       throw err;
     }
   },
+/**
+ * Récupère toutes les catégories distinctes de recettes
+ */
+async findAllCategories() {
+  try {
+    const query = `
+      SELECT DISTINCT category 
+      FROM recipes 
+      WHERE category IS NOT NULL 
+      ORDER BY category
+    `;
+    
+    const result = await pool.query(query);
+    return result.rows.map(row => row.category);
+  } catch (error) {
+    console.error('Erreur lors de la récupération des catégories:', error);
+    throw new DbError(error.message);
+  }
+},
 
+/**
+ * Récupère toutes les origines distinctes de recettes
+ */
+/**
+ * Récupère toutes les origines distinctes de recettes avec encodage UTF-8 correct
+ */
+async findAllOrigins() {
+  try {
+    // Requête directe à la base de données avec encodage explicitement défini
+    const query = {
+      text: `SELECT name FROM recipe_origins ORDER BY name`,
+      // Configurer explicitement l'encodage UTF-8 pour cette requête spécifique
+      options: { encoding: 'utf8' }
+    };
+    
+    // Ajouter un log pour débogage
+    console.log("Exécution de la requête pour les origines avec encodage UTF-8");
+    
+    // Exécuter la requête avec les options d'encodage
+    const result = await pool.query(query);
+    
+    // Extraire les résultats
+    const origins = result.rows.map(row => row.name);
+    
+    // Log pour vérifier les valeurs récupérées
+    console.log("Origines récupérées de la base de données:", origins);
+    
+    // Si nécessaire, on peut appliquer une correction supplémentaire ici
+    // pour s'assurer que les caractères sont bien encodés
+    const cleanedOrigins = origins.map(origin => 
+      // Remplacer les caractères mal encodés si nécessaire
+      origin
+        .replace(/Ã§/g, 'ç')
+        .replace(/Ã©/g, 'é')
+        .replace(/Ã¨/g, 'è')
+    );
+    
+    return cleanedOrigins;
+  } catch (error) {
+    console.error('Erreur lors de la récupération des origines:', error);
+    throw new DbError(error.message);
+  }
+},
+
+/**
+ * Récupère les statistiques de recettes par catégorie
+ */
+async findCategoriesStats() {
+  try {
+    const query = `
+      SELECT category, COUNT(*) as count 
+      FROM recipes 
+      WHERE category IS NOT NULL 
+      GROUP BY category 
+      ORDER BY count DESC
+    `;
+    
+    const result = await pool.query(query);
+    return result.rows;
+  } catch (error) {
+    console.error('Erreur lors de la récupération des statistiques de catégories:', error);
+    throw new DbError(error.message);
+  }
+},
+
+/**
+ * Récupère les statistiques de recettes par origine
+ */
+async findOriginsStats() {
+  try {
+    const query = `
+      SELECT origin, COUNT(*) as count 
+      FROM recipes 
+      WHERE origin IS NOT NULL 
+      GROUP BY origin 
+      ORDER BY count DESC
+    `;
+    
+    const result = await pool.query(query);
+    return result.rows;
+  } catch (error) {
+    console.error('Erreur lors de la récupération des statistiques d\'origines:', error);
+    throw new DbError(error.message);
+  }
+},
   // Mise à jour en lot du statut des recettes
   bulkUpdateStatus: async (recipeIds, status) => {
     try {

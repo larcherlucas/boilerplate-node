@@ -13,20 +13,13 @@ const router = express.Router();
 // Middleware pour nettoyer le cache lors des modifications
 const clearCache = (prefix) => {
   return (req, res, next) => {
-    // On mémorise l'ancien end pour pouvoir l'exécuter après
     const originalEnd = res.end;
-    
-    // On remplace la méthode end
     res.end = function(...args) {
-      // Si la requête a réussi (status 2xx), on invalide le cache
       if (res.statusCode >= 200 && res.statusCode < 300) {
         cacheService.invalidateByPrefix(prefix);
       }
-      
-      // On appelle la méthode originale
       return originalEnd.apply(this, args);
     };
-    
     next();
   };
 };
@@ -36,12 +29,8 @@ const clearRecipeCache = (req, res, next) => {
   const recipeId = parseInt(req.params.id, 10);
   
   if (!isNaN(recipeId)) {
-    // On mémorise l'ancien end pour pouvoir l'exécuter après
     const originalEnd = res.end;
-    
-    // On remplace la méthode end
     res.end = function(...args) {
-      // Si la requête a réussi (status 2xx), on invalide le cache
       if (res.statusCode >= 200 && res.statusCode < 300) {
         cacheService.del(`recipe_${recipeId}_admin`);
         cacheService.del(`recipe_${recipeId}_premium`);
@@ -49,13 +38,15 @@ const clearRecipeCache = (req, res, next) => {
         cacheService.del(`recipe_${recipeId}_none`);
         cacheService.del(`recipe_${recipeId}_ingredients`);
         cacheService.invalidateByPrefix('recipes_list');
+        // Invalider aussi les caches des catégories et origines
+        cacheService.del('recipes_categories');
+        cacheService.del('recipes_origins');
+        cacheService.del('recipes_categories_stats');
+        cacheService.del('recipes_origins_stats');
       }
-      
-      // On appelle la méthode originale
       return originalEnd.apply(this, args);
     };
   }
-  
   next();
 };
 
@@ -72,6 +63,19 @@ router.get('/cache-stats', authMiddleware, (req, res) => {
   });
 });
 
+// *** NOUVELLES ROUTES POUR CATÉGORIES ET ORIGINES ***
+// Route pour récupérer toutes les catégories disponibles
+router.get('/recipes/categories', detectAccessLevel, cw(recipeController.getCategories));
+
+// Route pour récupérer toutes les origines disponibles
+router.get('/recipes/origins', detectAccessLevel, cw(recipeController.getOrigins));
+
+// Route pour récupérer les statistiques sur les recettes par catégorie
+router.get('/recipes/categories/stats', detectAccessLevel, cw(recipeController.getCategoriesStats));
+
+// Route pour récupérer les statistiques sur les recettes par origine
+router.get('/recipes/origins/stats', detectAccessLevel, cw(recipeController.getOriginsStats));
+
 // Routes publiques avec détection du niveau d'accès
 // Attention à l'ordre: les routes plus spécifiques doivent venir avant les routes avec paramètres
 router.get('/recipes/type/:type', detectAccessLevel, cw(recipeController.getRecipesByType));
@@ -81,6 +85,9 @@ router.get('/recipes/:id/ingredients', detectAccessLevel, checkRecipeAccess, cw(
 
 // Routes protégées (nécessitent une authentification)
 router.use(authMiddleware);
+
+// Route pour les suggestions - après le middleware d'authentification
+router.get('/recipes/suggestions', detectAccessLevel, cw(recipeController.getSuggestions));
 
 // Routes d'administration des recettes (admin uniquement)
 // Les routes avec des noms spécifiques AVANT les routes avec des paramètres
@@ -94,24 +101,22 @@ router.get('/admin/recipes/:id', checkRole('admin'), cw(recipeController.getOneR
 router.post('/admin/recipes', checkRole('admin'), validate(recipeSchema), clearCache('recipes_list'), cw(recipeController.createRecipeAdmin));
 router.patch('/admin/recipes/:id', checkRole('admin'), validate(recipeSchema), clearRecipeCache, cw(recipeController.updateRecipeAdmin));
 router.delete('/admin/recipes/:id', checkRole('admin'), clearRecipeCache, cw(recipeController.deleteRecipeAdmin));
-// Route pour les suggestions - après le middleware d'authentification
-router.get('/recipes/suggestions', detectAccessLevel, cw(recipeController.getSuggestions));
 
 // Routes de création/modification - authentification requise
 router.post('/recipes',
   validate(recipeSchema),
-  clearCache('recipes_list'), // Invalider le cache des listes après création
+  clearCache('recipes_list'), 
   cw(recipeController.createRecipe)
 );
 
 router.patch('/recipes/:id',
   validate(recipeSchema),
-  clearRecipeCache, // Invalider le cache de cette recette spécifique
+  clearRecipeCache,
   cw(recipeController.updateRecipe)
 );
 
 router.delete('/recipes/:id',
-  clearRecipeCache, // Invalider le cache de cette recette spécifique
+  clearRecipeCache,
   cw(recipeController.deleteRecipe)
 );
 

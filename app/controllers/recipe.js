@@ -95,8 +95,8 @@ const recipeController = {
         search, 
         maxPrepTime, 
         minRating,
-        category,
-        origin
+        category,  // Ajout du filtre par catégorie
+        origin     // Ajout du filtre par origine
       } = req.query;
       
       // Construire l'objet de filtres
@@ -107,8 +107,8 @@ const recipeController = {
         search,
         maxPrepTime: maxPrepTime ? parseInt(maxPrepTime, 10) : null,
         minRating: minRating ? parseFloat(minRating) : null,
-        category,
-        origin
+        category,  // Ajout du filtre par catégorie
+        origin     // Ajout du filtre par origine
       };
       
       // Nettoyer les filtres null ou undefined
@@ -641,7 +641,9 @@ getAllRecipesAdmin: async (req, res) => {
       is_premium,
       sort_by = 'updated_at',
       sort_direction = 'desc',
-      search
+      search,
+      category,  // Ajout du filtre par catégorie
+      origin     // Ajout du filtre par origine
     } = req.query;
     
     // Construire l'objet filtres
@@ -650,7 +652,9 @@ getAllRecipesAdmin: async (req, res) => {
       meal_type, 
       difficulty_level,
       is_premium: is_premium === 'true' ? true : is_premium === 'false' ? false : undefined,
-      search
+      search,
+      category,  // Ajout du filtre par catégorie
+      origin     // Ajout du filtre par origine
     };
     
     // Nettoyer les filtres null ou undefined
@@ -689,8 +693,120 @@ getAllRecipesAdmin: async (req, res) => {
     console.error('Erreur dans getAllRecipesAdmin:', err);
     throw err;
   }
+},  
+// Méthodes à ajouter au recipeController
+
+/**
+ * Récupère toutes les catégories de recettes disponibles
+ */
+getCategories: async (req, res) => {
+  try {
+    // Clé de cache pour les catégories
+    const cacheKey = 'recipes_categories';
+    
+    // Utiliser le service de cache
+    const categories = await cacheService.getCachedData(
+      cacheKey,
+      async () => {
+        logger.info(`Cache miss pour ${cacheKey} - Chargement depuis la BDD`);
+        return await recipeDataMapper.findAllCategories();
+      },
+      24 * 60 * 60 // TTL de 24 heures (les catégories changent rarement)
+    );
+    
+    return res.status(200).json({
+      status: 'success',
+      data: categories
+    });
+  } catch (err) {
+    console.error('Erreur lors de la récupération des catégories:', err);
+    throw err;
+  }
 },
 
+/**
+ * Récupère toutes les origines de recettes disponibles
+ */
+getOrigins: async (req, res) => {
+  try {
+    // Clé de cache pour les origines
+    const cacheKey = 'recipes_origins';
+    
+    // Utiliser le service de cache
+    const origins = await cacheService.getCachedData(
+      cacheKey,
+      async () => {
+        logger.info(`Cache miss pour ${cacheKey} - Chargement depuis la BDD`);
+        return await recipeDataMapper.findAllOrigins();
+      },
+      24 * 60 * 60 // TTL de 24 heures (les origines changent rarement)
+    );
+    
+    return res.status(200).json({
+      status: 'success',
+      data: origins
+    });
+  } catch (err) {
+    console.error('Erreur lors de la récupération des origines:', err);
+    throw err;
+  }
+},
+
+/**
+ * Récupère les statistiques de recettes par catégorie
+ */
+getCategoriesStats: async (req, res) => {
+  try {
+    // Clé de cache pour les statistiques de catégories
+    const cacheKey = 'recipes_categories_stats';
+    
+    // Utiliser le service de cache
+    const stats = await cacheService.getCachedData(
+      cacheKey,
+      async () => {
+        logger.info(`Cache miss pour ${cacheKey} - Chargement depuis la BDD`);
+        return await recipeDataMapper.findCategoriesStats();
+      },
+      6 * 60 * 60 // TTL de 6 heures
+    );
+    
+    return res.status(200).json({
+      status: 'success',
+      data: stats
+    });
+  } catch (err) {
+    console.error('Erreur lors de la récupération des statistiques de catégories:', err);
+    throw err;
+  }
+},
+
+/**
+ * Récupère les statistiques de recettes par origine
+ */
+getOriginsStats: async (req, res) => {
+  try {
+    // Clé de cache pour les statistiques d'origines
+    const cacheKey = 'recipes_origins_stats';
+    
+    // Utiliser le service de cache
+    const stats = await cacheService.getCachedData(
+      cacheKey,
+      async () => {
+        logger.info(`Cache miss pour ${cacheKey} - Chargement depuis la BDD`);
+        return await recipeDataMapper.findOriginsStats();
+      },
+      6 * 60 * 60 // TTL de 6 heures
+    );
+    
+    return res.status(200).json({
+      status: 'success',
+      data: stats
+    });
+  } catch (err) {
+    console.error('Erreur lors de la récupération des statistiques d\'origines:', err);
+    throw err;
+  }
+},
 getDashboardStats: async (req, res) => {
   try {
     // Récupérer les statistiques nécessaires

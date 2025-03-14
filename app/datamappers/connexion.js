@@ -11,6 +11,7 @@ const pool = new Pool({
   user: 'lucas',     
   password: process.env.PGPASSWORD,
   database: process.env.PGDATABASE,
+  client_encoding: 'utf8',
   // ssl: {
   //   rejectUnauthorized: false,
   // },

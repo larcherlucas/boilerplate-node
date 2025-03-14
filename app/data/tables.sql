@@ -35,7 +35,16 @@ DROP TYPE IF EXISTS MENU_TYPE CASCADE;
 DROP TYPE IF EXISTS MENU_STATUS CASCADE;
 DROP TYPE IF EXISTS SUBSCRIPTION_STATUS CASCADE;
 DROP TYPE IF EXISTS SUBSCRIPTION_TYPE CASCADE;
-
+-- 1. Création du type ENUM pour les catégories d'âge
+DROP TYPE IF EXISTS AGE_CATEGORY CASCADE;
+CREATE TYPE AGE_CATEGORY AS ENUM (
+    'toute la famille', 
+    'bébé 6 à 9 mois', 
+    'bébé 9 à 12 mois', 
+    'bébé 12 à 18 mois', 
+    'bébé 18 mois et +', 
+    'enfant'
+);
 -- Création des types énumérés
 CREATE TYPE MEAL_TYPE AS ENUM ('breakfast', 'lunch', 'dinner', 'snack', 'dessert');
 CREATE TYPE DIFFICULTY_LEVEL AS ENUM ('easy', 'medium', 'hard');
@@ -88,6 +97,7 @@ COMMENT ON COLUMN users.subscription IS 'Détails de l''abonnement au format JSO
 COMMENT ON COLUMN users.subscription_type IS 'Type d''abonnement (none, monthly, annual)';
 COMMENT ON COLUMN users.subscription_status IS 'Statut de l''abonnement (active, cancelled, expired, pending, inactive)';
 
+
 -- Table des recettes avec nouvelle colonne category
 CREATE TABLE recipes (
     id SERIAL PRIMARY KEY,
@@ -113,7 +123,70 @@ CREATE TABLE recipes (
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+-- 2. Ajout de la colonne age_category à la table recipes
+ALTER TABLE recipes ADD COLUMN age_category AGE_CATEGORY;
 
+-- 3. Modification pour mieux gérer les origines
+-- Création d'une table de référence pour les origines de recettes
+CREATE TABLE recipe_origins (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(50) UNIQUE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Insertion des valeurs de base
+INSERT INTO recipe_origins (name) VALUES 
+('français'),
+('asiatique'),
+('italien'),
+('méditerranéen'),
+('mexicain'),
+('indien'),
+('moyen-oriental'),
+('autre');
+
+
+-- 4. Créer un index sur la colonne age_category pour améliorer les performances
+CREATE INDEX idx_recipes_age_category ON recipes(age_category);
+
+-- 5. Mise à jour de la vue recipes_frontend pour inclure les nouveaux champs
+DROP VIEW IF EXISTS recipes_frontend CASCADE;
+CREATE VIEW recipes_frontend AS
+SELECT 
+    r.id,
+    r.title,
+    r.description,
+    r.origin,
+    r.prep_time,
+    r.cook_time,
+    r.difficulty_level,
+    r.meal_type,
+    r.category,
+    r.age_category,
+    r.season,
+    r.is_premium,
+    r.premium_rank,
+    r.ingredients,
+    r.steps,
+    r.nutrition_info,
+    r.servings,
+    r.author_id,
+    u.email as author_email,
+    r.rating,
+    r.image_url,
+    r.status,
+    r.created_at,
+    r.updated_at,
+    (SELECT COUNT(*) FROM favorites f WHERE f.recipe_id = r.id) as favorite_count,
+    (SELECT AVG(rating) FROM recipe_reviews rr WHERE rr.recipe_id = r.id) as average_rating,
+    (SELECT COUNT(*) FROM recipe_reviews rr WHERE rr.recipe_id = r.id) as review_count
+FROM 
+    recipes r
+LEFT JOIN 
+    users u ON r.author_id = u.id;
+
+-- 6. Configuration de l'encodage UTF-8 pour éviter les problèmes avec les caractères spéciaux
+SET client_encoding = 'UTF8';
 COMMENT ON TABLE recipes IS 'Catalogue de recettes avec ingrédients, étapes et informations nutritionnelles';
 COMMENT ON COLUMN recipes.ingredients IS 'Liste structurée des ingrédients au format JSON';
 COMMENT ON COLUMN recipes.steps IS 'Etapes de preparation au format JSON';
@@ -214,7 +287,92 @@ CREATE TABLE payments (
 );
 
 COMMENT ON TABLE payments IS 'Historique des paiements effectués par les utilisateurs';
+-- Fonction améliorée pour la recherche de recettes avec tous les nouveaux critères
+CREATE OR REPLACE FUNCTION search_recipes(
+    p_meal_type MEAL_TYPE DEFAULT NULL,
+    p_age_category AGE_CATEGORY DEFAULT NULL,
+    p_origin VARCHAR DEFAULT NULL,
+    p_category VARCHAR DEFAULT NULL,
+    p_season SEASON DEFAULT NULL,
+    p_is_premium BOOLEAN DEFAULT NULL,
+    p_difficulty_level DIFFICULTY_LEVEL DEFAULT NULL,
+    p_search_term TEXT DEFAULT NULL,
+    p_limit INTEGER DEFAULT 20,
+    p_offset INTEGER DEFAULT 0
+) RETURNS TABLE (
+    id INTEGER,
+    title VARCHAR(255),
+    description TEXT,
+    origin VARCHAR(50),
+    age_category AGE_CATEGORY,
+    meal_type MEAL_TYPE,
+    category VARCHAR(50),
+    difficulty_level DIFFICULTY_LEVEL,
+    prep_time INTEGER,
+    cook_time INTEGER,
+    is_premium BOOLEAN,
+    rating DECIMAL(3,2),
+    image_url VARCHAR(255)
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        r.id,
+        r.title,
+        r.description,
+        r.origin,
+        r.age_category,
+        r.meal_type,
+        r.category,
+        r.difficulty_level,
+        r.prep_time,
+        r.cook_time,
+        r.is_premium,
+        r.rating,
+        r.image_url
+    FROM recipes r
+    WHERE 
+        (p_meal_type IS NULL OR r.meal_type = p_meal_type) AND
+        (p_age_category IS NULL OR r.age_category = p_age_category) AND
+        (p_origin IS NULL OR r.origin = p_origin) AND
+        (p_category IS NULL OR r.category = p_category) AND
+        (p_season IS NULL OR r.season = p_season OR r.season = 'all') AND
+        (p_is_premium IS NULL OR r.is_premium = p_is_premium) AND
+        (p_difficulty_level IS NULL OR r.difficulty_level = p_difficulty_level) AND
+        (p_search_term IS NULL OR 
+         r.title ILIKE '%' || p_search_term || '%' OR 
+         r.description ILIKE '%' || p_search_term || '%')
+    ORDER BY r.is_premium DESC, r.rating DESC, r.id
+    LIMIT p_limit
+    OFFSET p_offset;
+END;
+$$ LANGUAGE plpgsql;
 
+-- Vue pour grouper les recettes par origine
+CREATE OR REPLACE VIEW recipes_by_origin AS
+SELECT 
+    origin,
+    COUNT(*) as recipe_count,
+    ARRAY_AGG(id) as recipe_ids
+FROM 
+    recipes
+WHERE 
+    origin IS NOT NULL
+GROUP BY 
+    origin;
+
+-- Vue pour grouper les recettes par catégorie (Petit-déjeuner, Déjeuner, etc.)
+CREATE OR REPLACE VIEW recipes_by_category AS
+SELECT 
+    category,
+    COUNT(*) as recipe_count,
+    ARRAY_AGG(id) as recipe_ids
+FROM 
+    recipes
+WHERE 
+    category IS NOT NULL
+GROUP BY 
+    category;
 -- Table plans d'abonnement 
 CREATE TABLE subscription_plans (
     id SERIAL PRIMARY KEY,
