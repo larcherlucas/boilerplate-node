@@ -14,13 +14,17 @@ DROP TABLE IF EXISTS app_settings CASCADE;
 DROP VIEW IF EXISTS recipe_ratings CASCADE;
 DROP VIEW IF EXISTS recipes_by_age CASCADE;
 DROP VIEW IF EXISTS active_subscribers CASCADE;
+DROP VIEW IF EXISTS recipes_frontend CASCADE;
 
 DROP FUNCTION IF EXISTS update_recipe_rating() CASCADE;
 DROP FUNCTION IF EXISTS validate_recipe_json() CASCADE;
+DROP FUNCTION IF EXISTS normalize_recipe_json() CASCADE;
 DROP FUNCTION IF EXISTS sync_subscription_fields() CASCADE;
 DROP FUNCTION IF EXISTS update_updated_at_column() CASCADE;
 DROP FUNCTION IF EXISTS generate_weekly_menu(INTEGER) CASCADE;
 DROP FUNCTION IF EXISTS can_access_premium_recipe(INTEGER, INTEGER) CASCADE;
+DROP FUNCTION IF EXISTS update_category_from_meal_type() CASCADE;
+DROP FUNCTION IF EXISTS format_recipe_for_frontend(recipes) CASCADE;
 
 -- Suppression des types énumérés s'ils existent
 DROP TYPE IF EXISTS MEAL_TYPE CASCADE;
@@ -84,7 +88,7 @@ COMMENT ON COLUMN users.subscription IS 'Détails de l''abonnement au format JSO
 COMMENT ON COLUMN users.subscription_type IS 'Type d''abonnement (none, monthly, annual)';
 COMMENT ON COLUMN users.subscription_status IS 'Statut de l''abonnement (active, cancelled, expired, pending, inactive)';
 
--- Table des recettes
+-- Table des recettes avec nouvelle colonne category
 CREATE TABLE recipes (
     id SERIAL PRIMARY KEY,
     title VARCHAR(255) NOT NULL,
@@ -94,6 +98,7 @@ CREATE TABLE recipes (
     cook_time INTEGER CHECK (cook_time >= 0),
     difficulty_level DIFFICULTY_LEVEL NOT NULL,
     meal_type MEAL_TYPE NOT NULL,
+    category VARCHAR(50), -- Nouvelle colonne pour le frontend
     season SEASON NOT NULL DEFAULT 'all',
     is_premium BOOLEAN NOT NULL DEFAULT true, -- Par défaut, les recettes sont premium
     premium_rank INTEGER, -- Rang pour prioriser l'affichage des recettes premium
@@ -104,19 +109,17 @@ CREATE TABLE recipes (
     author_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     rating DECIMAL(3,2) CHECK (rating >= 0 AND rating <= 5),
     image_url VARCHAR(255),
+    status VARCHAR(50) DEFAULT 'published',
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT valid_ingredients_json CHECK (jsonb_typeof(ingredients) = 'object'),
-    CONSTRAINT valid_steps_json CHECK (jsonb_typeof(steps) = 'object')
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
--- ajout de la colonne status pour les recettes
-ALTER TABLE recipes ADD COLUMN status VARCHAR(50) DEFAULT 'published';
 
 COMMENT ON TABLE recipes IS 'Catalogue de recettes avec ingrédients, étapes et informations nutritionnelles';
 COMMENT ON COLUMN recipes.ingredients IS 'Liste structurée des ingrédients au format JSON';
 COMMENT ON COLUMN recipes.steps IS 'Etapes de preparation au format JSON';
 COMMENT ON COLUMN recipes.is_premium IS 'Indique si la recette est accessible uniquement aux abonnés premium';
 COMMENT ON COLUMN recipes.premium_rank IS 'Rang pour l''affichage prioritaire des recettes premium';
+COMMENT ON COLUMN recipes.category IS 'Catégorie de la recette formatée pour le frontend (ex: Petit-déjeuner)';
 
 -- Table des produits de saison
 CREATE TABLE ingredients_seasonal (
@@ -334,26 +337,80 @@ BEFORE INSERT OR UPDATE ON users
 FOR EACH ROW
 EXECUTE FUNCTION sync_subscription_fields();
 
--- Ajout d'index pour améliorer les performances des requêtes fréquentes
-CREATE INDEX idx_recipes_meal_type ON recipes(meal_type);
-CREATE INDEX idx_recipes_difficulty_level ON recipes(difficulty_level);
-CREATE INDEX idx_recipes_season ON recipes(season);
-CREATE INDEX idx_recipes_is_premium ON recipes(is_premium);
-CREATE INDEX idx_recipes_premium_rank ON recipes(premium_rank) WHERE is_premium = true;
-CREATE INDEX idx_weekly_menus_user_id ON weekly_menus(user_id);
-CREATE INDEX idx_weekly_menus_status ON weekly_menus(status);
-CREATE INDEX idx_ingredients_seasonal_seasons ON ingredients_seasonal USING GIN (seasons);
-CREATE INDEX idx_users_role ON users(role);
-CREATE INDEX idx_users_subscription_type ON users(subscription_type);
-CREATE INDEX idx_users_subscription_status ON users(subscription_status);
-CREATE INDEX idx_favorites_user_id ON favorites(user_id);
-CREATE INDEX idx_favorites_recipe_id ON favorites(recipe_id);
-CREATE INDEX idx_dietary_restrictions_user_id ON dietary_restrictions(user_id);
-CREATE INDEX idx_recipe_reviews_recipe_id ON recipe_reviews(recipe_id);
-CREATE INDEX idx_recipe_reviews_user_id ON recipe_reviews(user_id);
-CREATE INDEX idx_payments_user_id ON payments(user_id);
-CREATE INDEX idx_subscription_plans_subscription_type ON subscription_plans(subscription_type);
-CREATE INDEX idx_subscription_plans_is_active ON subscription_plans(is_active);
+-- Fonction pour normaliser le format JSON des recettes
+CREATE OR REPLACE FUNCTION normalize_recipe_json()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- Normaliser les ingrédients
+    IF jsonb_typeof(NEW.ingredients) = 'object' AND NEW.ingredients ? 'ingredients' THEN
+        -- Si c'est l'ancien format, convertir en tableau simple
+        NEW.ingredients = NEW.ingredients->'ingredients';
+    END IF;
+    
+    -- Si ingrédients n'est pas un tableau, créer un tableau vide
+    IF jsonb_typeof(NEW.ingredients) <> 'array' THEN
+        NEW.ingredients = '[]'::jsonb;
+    END IF;
+    
+    -- Normaliser les étapes
+    IF jsonb_typeof(NEW.steps) = 'object' AND NEW.steps ? 'steps' THEN
+        -- Si c'est l'ancien format avec une clé 'steps', le normaliser
+        NEW.steps = jsonb_build_array(
+            jsonb_build_object(
+                'category', 'Préparation',
+                'instructions', NEW.steps->'steps'
+            )
+        );
+    ELSIF jsonb_typeof(NEW.steps) = 'array' AND 
+          (jsonb_array_length(NEW.steps) = 0 OR 
+           (jsonb_array_length(NEW.steps) > 0 AND jsonb_typeof(NEW.steps->0) <> 'object')) THEN
+        -- Si c'est un tableau simple de chaînes, le convertir en format structuré
+        NEW.steps = jsonb_build_array(
+            jsonb_build_object(
+                'category', 'Préparation',
+                'instructions', NEW.steps
+            )
+        );
+    ELSIF jsonb_typeof(NEW.steps) <> 'array' THEN
+        -- Si steps n'est pas un tableau, créer un format standard
+        NEW.steps = jsonb_build_array(
+            jsonb_build_object(
+                'category', 'Préparation',
+                'instructions', '[]'::jsonb
+            )
+        );
+    END IF;
+    
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Appliquer cette normalisation avant l'insertion ou la mise à jour
+CREATE TRIGGER normalize_recipe_json_trigger
+BEFORE INSERT OR UPDATE ON recipes
+FOR EACH ROW
+EXECUTE FUNCTION normalize_recipe_json();
+
+-- Fonction pour mettre à jour automatiquement la catégorie en fonction du type de repas
+CREATE OR REPLACE FUNCTION update_category_from_meal_type()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.category = CASE
+        WHEN NEW.meal_type = 'breakfast' THEN 'Petit-déjeuner'
+        WHEN NEW.meal_type = 'lunch' THEN 'Déjeuner'
+        WHEN NEW.meal_type = 'dinner' THEN 'Dîner'
+        WHEN NEW.meal_type = 'snack' THEN 'En-cas'
+        WHEN NEW.meal_type = 'dessert' THEN 'Dessert'
+        ELSE 'Autre'
+    END;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER update_category_trigger
+BEFORE INSERT OR UPDATE OF meal_type ON recipes
+FOR EACH ROW
+EXECUTE FUNCTION update_category_from_meal_type();
 
 -- Fonction pour calculer la moyenne des notes d'une recette
 CREATE OR REPLACE FUNCTION update_recipe_rating()
@@ -375,28 +432,62 @@ CREATE TRIGGER update_recipe_rating_trigger
     FOR EACH ROW
     EXECUTE FUNCTION update_recipe_rating();
 
--- Fonction pour valider la structure JSON des recettes
-CREATE OR REPLACE FUNCTION validate_recipe_json() 
-RETURNS TRIGGER AS $$
+-- Fonction pour formater les recettes au format du frontend
+CREATE OR REPLACE FUNCTION format_recipe_for_frontend(recipe recipes)
+RETURNS jsonb AS $$
+DECLARE
+    formatted_recipe jsonb;
 BEGIN
-    -- Vérifier que la structure du JSON des ingrédients est correcte
-    IF NOT (NEW.ingredients ? 'ingredients' AND jsonb_typeof(NEW.ingredients->'ingredients') = 'array') THEN
-        RAISE EXCEPTION 'Invalid ingredients JSON structure';
-    END IF;
+    -- Structurer les données selon les besoins du frontend
+    formatted_recipe = jsonb_build_object(
+        'id', recipe.id,
+        'title', recipe.title,
+        'description', recipe.description,
+        'prep_time', recipe.prep_time,
+        'cook_time', recipe.cook_time,
+        'servings', recipe.servings,
+        'difficulty_level', recipe.difficulty_level,
+        'meal_type', recipe.meal_type,
+        'category', recipe.category,
+        'season', recipe.season,
+        'is_premium', recipe.is_premium,
+        'origin', recipe.origin,
+        'ingredients', recipe.ingredients,
+        'steps', recipe.steps,
+        'nutrition_info', recipe.nutrition_info,
+        'author_id', recipe.author_id,
+        'rating', recipe.rating,
+        'image_url', recipe.image_url,
+        'status', recipe.status,
+        'created_at', recipe.created_at,
+        'updated_at', recipe.updated_at
+    );
     
-    -- Vérifier que la structure du JSON des étapes est correcte
-    IF NOT (NEW.steps ? 'steps' AND jsonb_typeof(NEW.steps->'steps') = 'array') THEN
-        RAISE EXCEPTION 'Invalid steps JSON structure';
-    END IF;
-    
-    RETURN NEW;
+    RETURN formatted_recipe;
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER validate_recipe_json_trigger
-    BEFORE INSERT OR UPDATE ON recipes
-    FOR EACH ROW
-    EXECUTE FUNCTION validate_recipe_json();
+-- Ajout d'index pour améliorer les performances des requêtes fréquentes
+CREATE INDEX idx_recipes_meal_type ON recipes(meal_type);
+CREATE INDEX idx_recipes_difficulty_level ON recipes(difficulty_level);
+CREATE INDEX idx_recipes_season ON recipes(season);
+CREATE INDEX idx_recipes_is_premium ON recipes(is_premium);
+CREATE INDEX idx_recipes_premium_rank ON recipes(premium_rank) WHERE is_premium = true;
+CREATE INDEX idx_recipes_category ON recipes(category);
+CREATE INDEX idx_weekly_menus_user_id ON weekly_menus(user_id);
+CREATE INDEX idx_weekly_menus_status ON weekly_menus(status);
+CREATE INDEX idx_ingredients_seasonal_seasons ON ingredients_seasonal USING GIN (seasons);
+CREATE INDEX idx_users_role ON users(role);
+CREATE INDEX idx_users_subscription_type ON users(subscription_type);
+CREATE INDEX idx_users_subscription_status ON users(subscription_status);
+CREATE INDEX idx_favorites_user_id ON favorites(user_id);
+CREATE INDEX idx_favorites_recipe_id ON favorites(recipe_id);
+CREATE INDEX idx_dietary_restrictions_user_id ON dietary_restrictions(user_id);
+CREATE INDEX idx_recipe_reviews_recipe_id ON recipe_reviews(recipe_id);
+CREATE INDEX idx_recipe_reviews_user_id ON recipe_reviews(user_id);
+CREATE INDEX idx_payments_user_id ON payments(user_id);
+CREATE INDEX idx_subscription_plans_subscription_type ON subscription_plans(subscription_type);
+CREATE INDEX idx_subscription_plans_is_active ON subscription_plans(is_active);
 
 -- Vue pour les recettes avec leurs notes moyennes et nombre d'avis
 CREATE VIEW recipe_ratings AS
@@ -420,6 +511,40 @@ CREATE VIEW active_subscribers AS
 SELECT id, username, email, subscription_type, subscription_start_date, subscription_end_date
 FROM users
 WHERE subscription_status = 'active';
+
+-- Vue qui combine toutes les données nécessaires pour le frontend
+CREATE VIEW recipes_frontend AS
+SELECT 
+    r.id,
+    r.title,
+    r.description,
+    r.origin,
+    r.prep_time,
+    r.cook_time,
+    r.difficulty_level,
+    r.meal_type,
+    r.category,
+    r.season,
+    r.is_premium,
+    r.premium_rank,
+    r.ingredients,
+    r.steps,
+    r.nutrition_info,
+    r.servings,
+    r.author_id,
+    u.email as author_email,
+    r.rating,
+    r.image_url,
+    r.status,
+    r.created_at,
+    r.updated_at,
+    (SELECT COUNT(*) FROM favorites f WHERE f.recipe_id = r.id) as favorite_count,
+    (SELECT AVG(rating) FROM recipe_reviews rr WHERE rr.recipe_id = r.id) as average_rating,
+    (SELECT COUNT(*) FROM recipe_reviews rr WHERE rr.recipe_id = r.id) as review_count
+FROM 
+    recipes r
+LEFT JOIN 
+    users u ON r.author_id = u.id;
 
 -- Fonction pour générer un menu hebdomadaire basé sur les préférences
 CREATE OR REPLACE FUNCTION generate_weekly_menu(user_id INTEGER)
