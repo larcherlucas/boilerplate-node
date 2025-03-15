@@ -95,8 +95,21 @@ const menusController = {
         valid_from, 
         valid_to, 
         family_size = 1, 
+        household_members,
         user_preferences 
       } = value;
+      
+      // Obtenir les informations de household_members depuis la base de données si non fournies
+      let householdInfo = household_members;
+      if (!householdInfo) {
+        const user = await accountDataMapper.findOneAccount(req.user.id);
+        householdInfo = user.household_members || {
+          adults: 1,
+          children_over_3: 0,
+          children_under_3: 0,
+          babies: 0
+        };
+      }
       
       // Déterminer le type d'utilisateur pour l'accès aux recettes
       const userRole = req.user?.role || 'user';
@@ -106,11 +119,14 @@ const menusController = {
       const excludedIngredients = user_preferences?.excludedIngredients || [];
       const dietaryRestrictions = user_preferences?.dietaryRestrictions || [];
       const mealTypes = user_preferences?.mealTypes || ['breakfast', 'lunch', 'dinner'];
+      const ageCategories = user_preferences?.age_category || ['toute la famille'];
       
       console.log('Préférences:', {
         excludedIngredients,
         dietaryRestrictions,
-        mealTypes
+        mealTypes,
+        ageCategories,
+        householdInfo
       });
       
       // Préparer la liste combinée de restrictions alimentaires
@@ -122,34 +138,60 @@ const menusController = {
         allRestrictions,
         family_size,
         mealTypes,
+        ageCategories,
         100, // limite raisonnable
         userRole
       );
       
       console.log(`${eligibleRecipes.length} recettes éligibles trouvées`);
       
+      // Récupérer les menus précédents pour éviter la répétition
+      const previousMenus = await menusDataMapper.findRecentMenus(req.user.id, 3); // Récupérer les 3 derniers menus
+      const previousRecipeIds = new Set();
+      
+      // Extraire les IDs des recettes utilisées dans les menus précédents
+      previousMenus.forEach(menu => {
+        Object.values(menu.meal_schedule).forEach(day => {
+          Object.values(day).forEach(meal => {
+            if (meal && meal.recipe_id) {
+              previousRecipeIds.add(meal.recipe_id);
+            }
+          });
+        });
+      });
+      
+      console.log(`${previousRecipeIds.size} recettes récemment utilisées à éviter`);
+      
       // Récupérer les recettes favorites si disponible
       let favoriteRecipes = [];
       try {
-        favoriteRecipes = await favoritesDataMapper.getAll(req.user.id);
+        favoriteRecipes = await favoritesDataMapper.findAllByUser(req.user.id);
         console.log(`${favoriteRecipes.length} recettes favorites trouvées`);
       } catch (err) {
         console.warn('Impossible de récupérer les favoris:', err);
       }
       
+      // Filtrer les recettes favorites par type de repas et âge
+      const filteredFavorites = favoriteRecipes.filter(fav => 
+        mealTypes.includes(fav.recipe.meal_type) && 
+        (!ageCategories.length || ageCategories.includes(fav.recipe.age_category))
+      );
+      
       // Générer le planning de repas
       const options = {
-        numberOfMeals: 3,
-        numberOfDays: 7,
-        includeFavorites: favoriteRecipes.length > 0,
+        numberOfDays: type === 'weekly' ? 7 : 30,
+        includeFavorites: filteredFavorites.length > 0,
         familySize: family_size,
-        mealTypes: mealTypes
+        householdInfo: householdInfo,
+        mealTypes: mealTypes,
+        ageCategories: ageCategories,
+        previousRecipeIds: [...previousRecipeIds]
       };
       
       console.log('Génération du planning des repas...');
       const filledMealSchedule = generateMealSchedule(
         eligibleRecipes,
-        favoriteRecipes,
+        filteredFavorites,
         options
       );
       
@@ -164,9 +206,11 @@ const menusController = {
         family_size,
         generated_options: {
           generated_at: new Date().toISOString(),
+          household_members: householdInfo,
           excluded_ingredients: excludedIngredients,
           dietary_restrictions: dietaryRestrictions,
-          meal_types: mealTypes
+          meal_types: mealTypes,
+          age_categories: ageCategories
         }
       };
       
@@ -232,23 +276,43 @@ const menusController = {
  * @returns {Object} Planning des repas
  */
 function generateMealSchedule(eligibleRecipes, favoriteRecipes, options) {
-  const { numberOfMeals, numberOfDays = 7, includeFavorites, mealTypes } = options;
+  const { 
+    numberOfDays = 7, 
+    includeFavorites, 
+    familySize,
+    householdInfo,
+    mealTypes,
+    ageCategories,
+    previousRecipeIds = []
+  } = options;
   
   // Organiser les recettes par type de repas
   const recipesByType = mealTypes.reduce((acc, type) => {
-    acc[type] = eligibleRecipes.filter(recipe => recipe.meal_type === type);
+    // Exclure les recettes déjà utilisées récemment
+    const availableRecipes = eligibleRecipes.filter(recipe => 
+      recipe.meal_type === type && 
+      !previousRecipeIds.includes(recipe.id) &&
+      (ageCategories.includes(recipe.age_category) || !recipe.age_category)
+    );
+    acc[type] = availableRecipes;
     return acc;
   }, {});
   
   // Organiser les favoris par type de repas si inclus
   const favoritesByType = includeFavorites ? mealTypes.reduce((acc, type) => {
-    acc[type] = favoriteRecipes.filter(recipe => recipe.meal_type === type);
+    const availableFavorites = favoriteRecipes.filter(fav => 
+      fav.recipe.meal_type === type && 
+      !previousRecipeIds.includes(fav.recipe.id) &&
+      (ageCategories.includes(fav.recipe.age_category) || !fav.recipe.age_category)
+    );
+    acc[type] = availableFavorites;
     return acc;
   }, {}) : {};
   
-  // Générer le planning sur le nombre de jours demandé
+  // Structurer le planning selon la période (hebdomadaire ou mensuelle)
   const mealSchedule = {};
   
+  // Format du planning: day_1, day_2, etc. pour les jours
   for (let day = 1; day <= numberOfDays; day++) {
     const dayKey = `day_${day}`;
     mealSchedule[dayKey] = {};
@@ -257,8 +321,8 @@ function generateMealSchedule(eligibleRecipes, favoriteRecipes, options) {
     mealTypes.forEach(mealType => {
       // Déterminer si on utilise une recette favorite pour ce repas (25% de chance si disponible)
       const useFavorite = includeFavorites && 
-                          favoritesByType[mealType]?.length > 0 && 
-                          Math.random() < 0.25;
+                        favoritesByType[mealType]?.length > 0 && 
+                        Math.random() < 0.25;
       
       // Sélectionner une recette au hasard
       let selectedRecipes;
@@ -270,30 +334,59 @@ function generateMealSchedule(eligibleRecipes, favoriteRecipes, options) {
       
       // S'assurer qu'il y a des recettes disponibles
       if (selectedRecipes && selectedRecipes.length > 0) {
-        const randomIndex = Math.floor(Math.random() * selectedRecipes.length);
-        const selectedRecipe = selectedRecipes[randomIndex];
+        // Privilégier les recettes adaptées à l'âge des membres du foyer
+        let prioritizedRecipes = selectedRecipes;
+        
+        if (householdInfo && (householdInfo.babies > 0 || householdInfo.children_under_3 > 0)) {
+          // Si le foyer a des bébés, essayer de trouver des recettes adaptées
+          const babyFriendlyRecipes = selectedRecipes.filter(r => 
+            r.age_category && r.age_category.includes('bébé')
+          );
+          if (babyFriendlyRecipes.length > 0) {
+            prioritizedRecipes = babyFriendlyRecipes;
+          }
+        }
+        
+        const randomIndex = Math.floor(Math.random() * prioritizedRecipes.length);
+        const selectedRecipe = prioritizedRecipes[randomIndex];
+        
+        // Recette brute ou contenue dans un objet favori
+        const recipeData = selectedRecipe.recipe_id ? selectedRecipe.recipe : selectedRecipe;
         
         // Ajouter la recette au planning
         mealSchedule[dayKey][mealType] = {
-          recipe_id: selectedRecipe.id,
-          title: selectedRecipe.title,
+          recipe_id: recipeData.id,
+          title: recipeData.title,
           is_favorite: useFavorite,
-          image_url: selectedRecipe.image_url,
-          prep_time: selectedRecipe.prep_time,
-          cook_time: selectedRecipe.cook_time,
-          difficulty_level: selectedRecipe.difficulty_level,
-          servings: options.familySize || 1
+          image_url: recipeData.image_url,
+          prep_time: recipeData.prep_time,
+          cook_time: recipeData.cook_time,
+          difficulty_level: recipeData.difficulty_level,
+          servings: familySize || 1,
+          age_category: recipeData.age_category || 'toute la famille'
         };
         
         // Retirer la recette des listes pour éviter les répétitions
         if (useFavorite) {
-          favoritesByType[mealType] = favoritesByType[mealType].filter(r => r.id !== selectedRecipe.id);
+          favoritesByType[mealType] = favoritesByType[mealType].filter(r => 
+            r.recipe.id !== recipeData.id
+          );
         }
-        recipesByType[mealType] = recipesByType[mealType].filter(r => r.id !== selectedRecipe.id);
+        recipesByType[mealType] = recipesByType[mealType].filter(r => r.id !== recipeData.id);
         
         // Si on n'a plus de recettes de ce type, réinitialiser la liste
-        if (recipesByType[mealType].length === 0 || recipesByType[mealType].length < 3) {
-          recipesByType[mealType] = eligibleRecipes.filter(recipe => recipe.meal_type === mealType);
+        // mais en excluant toujours les recettes déjà utilisées dans ce menu
+        if (recipesByType[mealType].length < 3) {
+          const usedIdsInCurrentMenu = Object.values(mealSchedule)
+            .flatMap(day => Object.values(day))
+            .filter(meal => meal && meal.recipe_id)
+            .map(meal => meal.recipe_id);
+          
+          recipesByType[mealType] = eligibleRecipes.filter(recipe => 
+            recipe.meal_type === mealType && 
+            !usedIdsInCurrentMenu.includes(recipe.id) &&
+            (ageCategories.includes(recipe.age_category) || !recipe.age_category)
+          );
         }
       } else {
         // Si aucune recette n'est disponible pour ce type de repas
